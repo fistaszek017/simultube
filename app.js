@@ -10,8 +10,16 @@
   // === KONFIGURACJA ===
   // Wpisz tu adres swojego relaya z Deno Deploy PRZED publikacją na GitHub Pages.
   // Możesz też ustawić go tymczasowo w przeglądarce (ekran "Skonfiguruj relay").
-  const RELAY_DEFAULT = "happy-mandrill-6605.fistaszek017.deno.net";
-  let RELAY_URL = (localStorage.getItem("symultube_relay") || RELAY_DEFAULT).replace(/\/+$/, "");
+  // UWAGA: adres MUSI zaczynać się od https:// — bez tego fetch potraktuje go jako
+  // ścieżkę względną i trafi na GitHub Pages (błąd 405). Poniżej i tak to dokładamy.
+  const RELAY_DEFAULT = "https://happy-mandrill-6605.fistaszek017.deno.net";
+
+  function normalizeRelay(u) {
+    u = (u || "").trim().replace(/\/+$/, "");
+    if (u && !/^https?:\/\//i.test(u)) u = "https://" + u; // dodaj schemat, jeśli brakuje
+    return u;
+  }
+  let RELAY_URL = normalizeRelay(localStorage.getItem("symultube_relay") || RELAY_DEFAULT);
 
   const RTC_CONFIG = {
     iceServers: [
@@ -79,7 +87,7 @@
   function show(el) { el.classList.remove("hidden"); }
   function hide(el) { el.classList.add("hidden"); }
 
-  function relayConfigured() { return RELAY_URL && !RELAY_URL.includes("CHANGE-ME"); }
+  function relayConfigured() { return /^https?:\/\//i.test(RELAY_URL) && !RELAY_URL.includes("CHANGE-ME"); }
 
   function parseVideoId(input) {
     if (!input) return null;
@@ -482,7 +490,7 @@
       show(ui.relayMissing);
       ui.relayInput.value = RELAY_URL.includes("CHANGE-ME") ? "" : RELAY_URL;
       ui.relaySaveBtn.addEventListener("click", () => {
-        const val = ui.relayInput.value.trim().replace(/\/+$/, "");
+        const val = normalizeRelay(ui.relayInput.value);
         if (!val) return;
         localStorage.setItem("symultube_relay", val);
         RELAY_URL = val;
