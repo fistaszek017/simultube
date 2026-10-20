@@ -2,21 +2,24 @@
 
 Prosta aplikacja webowa do **wspólnego, zsynchronizowanego oglądania YouTube** przez dwie (lub więcej) osoby.
 
-- **Host** wybiera film i steruje odtwarzaniem/pauzą — widz jest synchronizowany automatycznie.
-- Działa **peer-to-peer** (czysty WebRTC) z **ręczną sygnalizacją** (wymiana dwóch kodów), więc **nie wymaga żadnego serwera, backendu ani kont**.
-- Jedyna rzecz „z zewnątrz" to darmowe publiczne serwery **STUN** (potrzebne do wykrycia adresu w internecie) — nie przechodzą przez nie żadne dane wideo ani sterowania.
+- **Host** wybiera film i steruje odtwarzaniem/pauzą — widzowie są synchronizowani automatycznie.
+- Działa **peer-to-peer** (czysty WebRTC) z **ręczną sygnalizacją**, więc **nie wymaga żadnego serwera, backendu ani kont**.
+- **Multi-user**: jeden host, wielu widzów (topologia gwiazdy — host trzyma osobne połączenie z każdym).
+- Jedyna rzecz „z zewnątrz" to darmowe publiczne serwery **STUN** (do wykrycia adresu w internecie) — nie przechodzą przez nie żadne dane wideo ani sterowania.
 
 ## Jak to działa
 
-1. **Host** wybiera „Jestem hostem", wkleja link do filmu i klika **„Generuj kod zaproszenia"**.
-2. Host kopiuje **kod zaproszenia** i wysyła go znajomemu (Discord, Messenger, cokolwiek).
-3. **Widz** wybiera „Dołączam", wkleja kod zaproszenia i klika **„Generuj kod odpowiedzi"**.
-4. Widz kopiuje swój **kod odpowiedzi** i odsyła go hostowi.
-5. Host wkleja kod odpowiedzi i klika **„Połącz"** → gotowe, połączenie bezpośrednie P2P.
+1. **Host** wybiera „Jestem hostem", wkleja link do filmu i klika **„Utwórz pokój"**.
+2. Dla każdego widza host dostaje **spersonalizowany link zaproszenia** (`...#join=...`) — kopiuje go i wysyła (przycisk „+ Nowy link zaproszenia" dodaje kolejnych widzów).
+3. **Widz** klika link → strona sama otwiera tryb dołączania → klika **„Generuj kod zwrotny"**.
+4. Widz kopiuje swój **krótki kod zwrotny** (skompresowany gzip) i odsyła go hostowi.
+5. Host wkleja kod zwrotny w kartę danego widza i klika **„Połącz"** → gotowe, połączenie bezpośrednie P2P.
 
-Od tej chwili host steruje playerem (play/pause/przewijanie), a komendy lecą prosto do widza. Dodatkowo co 2 s wysyłany jest sygnał synchronizujący pozycję (tolerancja ~1 s), żeby nikt nie „odjechał".
+Od tej chwili host steruje playerem (play/pause/przewijanie), a komendy lecą prosto do wszystkich widzów. Dodatkowo co 2 s idzie sygnał synchronizujący pozycję (tolerancja ~1 s). Widz ma własny pasek postępu z czasem (natywny pasek YT jest u niego zablokowany).
 
-> Wymianę kodów robi się tylko raz, przy zestawianiu połączenia. To cena za brak jakiegokolwiek serwera.
+### Dlaczego jest kod zwrotny, a nie np. 6 cyfr?
+
+WebRTC wymaga dwustronnej wymiany opisów połączenia (offer ↔ answer). Kod zwrotny niesie realne dane (odcisk DTLS, ice-ufrag/pwd, kandydatów ICE) — kilkaset bajtów, nie da się ich upchnąć w 6 cyfr bez „skrzynki" w chmurze (czyli serwera). Dlatego kod jest skompresowany, ale musi zostać. Jedyny sposób, by zniknął całkowicie, to dodanie lekkiego serwera sygnalizacyjnego.
 
 ## Blokowanie reklam
 
@@ -62,6 +65,6 @@ Najwygodniej testować dwa „końce" w dwóch kartach/przeglądarkach albo na d
 
 ## Ograniczenia
 
-- Połączenie jest **1:1** (host ↔ jeden widz) — dokładnie „dwie osoby". Więcej widzów wymagałoby powtórzenia wymiany kodów z każdym z osobna.
+- Każdy widz to osobny handshake (link + kod zwrotny). Dla kilku osób jest OK, ale im więcej widzów, tym więcej ręcznej wymiany po stronie hosta.
 - Przy bardzo restrykcyjnym NAT (tzw. symmetric NAT) samo STUN może nie wystarczyć do zestawienia bezpośredniego połączenia. Wtedy potrzebny byłby serwer TURN (jedyny przypadek, gdy przydałby się „ktoś z zewnątrz").
 - Synchronizacja jest „na oko" dokładna (tolerancja ~1 s) — dla zwykłego oglądania w zupełności wystarcza.
