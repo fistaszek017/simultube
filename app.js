@@ -121,20 +121,34 @@
     });
   }
 
-  // ---- Relay (fetch) ----
-  async function relayPost(path, body) {
-    const r = await fetch(RELAY_URL + path, {
+  // ---- Relay (fetch z ponawianiem) ----
+  // Nowy Deno Deploy po wdrożeniu "rozgrzewa" izolat i potrafi chwilowo
+  // zwracać 5xx (np. 501). Ponawiamy na błędach serwera/sieci; 4xx rzucamy od razu.
+  async function relayFetch(path, options, tries = 4) {
+    let lastErr;
+    for (let i = 0; i < tries; i++) {
+      try {
+        const r = await fetch(RELAY_URL + path, options);
+        if (r.ok) return r.json();
+        if (r.status < 500) throw new Error("relay " + r.status); // 4xx = nie ponawiaj
+        lastErr = new Error("relay " + r.status);
+      } catch (e) {
+        lastErr = e;
+        if (/relay 4\d\d/.test(e.message)) throw e;
+      }
+      if (i < tries - 1) await new Promise((res) => setTimeout(res, 800));
+    }
+    throw lastErr;
+  }
+  function relayPost(path, body) {
+    return relayFetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!r.ok) throw new Error("relay " + r.status);
-    return r.json();
   }
-  async function relayGet(path) {
-    const r = await fetch(RELAY_URL + path);
-    if (!r.ok) throw new Error("relay " + r.status);
-    return r.json();
+  function relayGet(path) {
+    return relayFetch(path, undefined);
   }
 
   // ---- YouTube ----
