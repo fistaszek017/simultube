@@ -59,6 +59,14 @@
     pauseBtn: $("pauseBtn"),
     syncBtn: $("syncBtn"),
     unmuteBtn: $("unmuteBtn"),
+    cinemaBtnHost: $("cinemaBtnHost"),
+    cinemaBtnViewer: $("cinemaBtnViewer"),
+    fsBtnHost: $("fsBtnHost"),
+    fsBtnViewer: $("fsBtnViewer"),
+    viewerProgress: $("viewerProgress"),
+    curTime: $("curTime"),
+    durTime: $("durTime"),
+    progressFill: $("progressFill"),
   };
 
   // ---- Pomocnicze ----
@@ -146,6 +154,7 @@
             if (asViewer) {
               player.mute();
               if (pendingState) { applyState(pendingState); pendingState = null; }
+              startProgressLoop();
             }
           },
           onStateChange: role === "host" ? onHostStateChange : undefined,
@@ -423,6 +432,84 @@
     const drift = Math.abs(player.getCurrentTime() - t);
     if (drift > tolerance) player.seekTo(t, true);
   }
+
+  // ---- Pasek postępu i czas (dla widza) ----
+  function fmtTime(s) {
+    if (!isFinite(s) || s < 0) s = 0;
+    s = Math.floor(s);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    const pad = (n) => String(n).padStart(2, "0");
+    return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+  }
+
+  let progressTimer = null;
+  function startProgressLoop() {
+    if (progressTimer) return;
+    show(ui.viewerProgress);
+    progressTimer = setInterval(updateProgress, 500);
+    updateProgress();
+  }
+
+  function updateProgress() {
+    if (!playerReady || role !== "viewer") return;
+    let cur = 0, dur = 0;
+    try { cur = player.getCurrentTime() || 0; dur = player.getDuration() || 0; } catch (_) { return; }
+    ui.curTime.textContent = fmtTime(cur);
+    ui.durTime.textContent = fmtTime(dur);
+    const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+    ui.progressFill.style.width = pct + "%";
+  }
+
+  // =====================================================================
+  //  Tryb kinowy i pełny ekran
+  // =====================================================================
+  function toggleCinema() {
+    const on = document.body.classList.toggle("cinema");
+    [ui.cinemaBtnHost, ui.cinemaBtnViewer].forEach((b) => {
+      if (b) b.classList.toggle("btn--active", on);
+    });
+  }
+
+  function toggleFullscreen() {
+    const el = ui.playerWrap;
+    if (!document.fullscreenElement) {
+      (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+    }
+  }
+
+  function onFsChange() {
+    const on = !!document.fullscreenElement;
+    [ui.fsBtnHost, ui.fsBtnViewer].forEach((b) => {
+      if (b) b.classList.toggle("btn--active", on);
+    });
+  }
+
+  [ui.cinemaBtnHost, ui.cinemaBtnViewer].forEach((b) =>
+    b && b.addEventListener("click", toggleCinema));
+  [ui.fsBtnHost, ui.fsBtnViewer].forEach((b) =>
+    b && b.addEventListener("click", toggleFullscreen));
+  document.addEventListener("fullscreenchange", onFsChange);
+  document.addEventListener("webkitfullscreenchange", onFsChange);
+
+  // Skróty klawiszowe (gdy player widoczny i nie piszemy w polu)
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target && e.target.tagName) || "";
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (ui.playerWrap.classList.contains("hidden")) return;
+    const k = e.key.toLowerCase();
+    if (k === "t") { e.preventDefault(); toggleCinema(); }
+    else if (k === "f") { e.preventDefault(); toggleFullscreen(); }
+    else if (k === " " && role === "host" && player) {
+      e.preventDefault();
+      const s = player.getPlayerState();
+      if (s === YT.PlayerState.PLAYING) player.pauseVideo();
+      else player.playVideo();
+    }
+  });
 
   // =====================================================================
   //  Start

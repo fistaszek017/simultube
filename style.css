@@ -94,6 +94,13 @@ body {
 .btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn--primary:hover { background: var(--accent-2); }
 .btn--big { font-size: 1.1rem; padding: 16px 28px; width: 100%; }
+.btn--icon { padding: 11px 13px; font-size: 1.05rem; line-height: 1; }
+.btn--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn--active:hover { background: var(--accent-2); }
 
 .viewers { margin-top: 14px; color: var(--muted); }
 .viewers strong { color: var(--ok); }
@@ -182,8 +189,45 @@ body {
   gap: 10px;
   margin-top: 12px;
   flex-wrap: wrap;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
 }
 .controls__spacer { flex: 1; }
+
+/* Pasek postępu widza */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.progress__time {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-width: 44px;
+  text-align: center;
+}
+.progress__track {
+  flex: 1;
+  height: 7px;
+  background: var(--card-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress__fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  border-radius: 999px;
+  transition: width 0.4s linear;
+}
 .role-badge {
   font-size: 0.72rem;
   font-weight: 700;
@@ -206,4 +250,79 @@ body {
   text-align: center;
   padding: 10px 0 20px;
   font-size: 0.8rem;
+}
+
+/* ===== Tryb kinowy (theater) ===== */
+body.cinema {
+  max-width: 100%;
+  padding: 0;
+  background: #000;
+}
+body.cinema .topbar {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 12px 18px;
+}
+body.cinema .tips,
+body.cinema .foot,
+body.cinema #hostExchange,
+body.cinema #viewerAnswer {
+  display: none !important;
+}
+body.cinema .player-wrap {
+  margin: 0 auto;
+}
+body.cinema .player-box {
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  max-width: calc((100vh - 160px) * 16 / 9);
+  margin-inline: auto;
+}
+body.cinema .controls,
+body.cinema .progress {
+  max-width: calc((100vh - 160px) * 16 / 9);
+  margin: 10px auto 0;
+  border-radius: 10px;
+}
+
+/* ===== Pełny ekran ===== */
+.player-wrap:fullscreen {
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+}
+.player-wrap:fullscreen .player-box {
+  flex: 1 1 auto;
+  aspect-ratio: auto;
+  width: 100%;
+  height: auto;
+  border: none;
+  border-radius: 0;
+}
+.player-wrap:fullscreen .controls,
+.player-wrap:fullscreen .progress {
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  background: rgba(10, 10, 14, 0.85);
+  backdrop-filter: blur(6px);
+}
+/* wariant z prefiksem WebKit */
+.player-wrap:-webkit-full-screen {
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+}
+.player-wrap:-webkit-full-screen .player-box {
+  flex: 1 1 auto;
+  aspect-ratio: auto;
+  height: auto;
+  border: none;
+  border-radius: 0;
 }

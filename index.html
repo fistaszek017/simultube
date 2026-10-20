@@ -91,16 +91,26 @@
     </div>
 
     <div id="hostControls" class="controls hidden">
-      <button id="playBtn" class="btn">▶ Odtwórz</button>
+      <button id="playBtn" class="btn btn--primary">▶ Odtwórz</button>
       <button id="pauseBtn" class="btn">⏸ Pauza</button>
-      <button id="syncBtn" class="btn" title="Wymuś synchronizację">⟳ Zsynchronizuj</button>
+      <button id="syncBtn" class="btn btn--icon" title="Wymuś synchronizację u widza">⟳</button>
       <div class="controls__spacer"></div>
+      <button id="cinemaBtnHost" class="btn btn--icon" title="Tryb kinowy (t)">🎦</button>
+      <button id="fsBtnHost" class="btn btn--icon" title="Pełny ekran (f)">⛶</button>
       <span class="role-badge role-badge--host">HOST</span>
     </div>
 
+    <div id="viewerProgress" class="progress hidden">
+      <span id="curTime" class="progress__time">0:00</span>
+      <div class="progress__track"><div id="progressFill" class="progress__fill"></div></div>
+      <span id="durTime" class="progress__time">0:00</span>
+    </div>
+
     <div id="viewerBar" class="controls hidden">
-      <button id="unmuteBtn" class="btn">🔊 Włącz dźwięk</button>
+      <button id="unmuteBtn" class="btn btn--primary">🔊 Włącz dźwięk</button>
       <div class="controls__spacer"></div>
+      <button id="cinemaBtnViewer" class="btn btn--icon" title="Tryb kinowy (t)">🎦</button>
+      <button id="fsBtnViewer" class="btn btn--icon" title="Pełny ekran (f)">⛶</button>
       <span class="role-badge role-badge--viewer">WIDZ</span>
     </div>
   </section>
