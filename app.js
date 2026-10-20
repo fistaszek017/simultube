@@ -1,38 +1,56 @@
-/* SymulTube - wspólne oglądanie YouTube (peer-to-peer, bez backendu) */
+/* SymulTube - wspólne oglądanie YouTube
+   Czysty WebRTC z ręczną sygnalizacją (kopiuj/wklej kody).
+   Zero serwerów, zero kont, tylko darmowy STUN do wykrycia adresu. */
 
 (() => {
   "use strict";
 
-  // ---- Rola na podstawie adresu URL ----
-  const params = new URLSearchParams(location.search);
-  const roomId = params.get("room");
-  const isHost = !roomId;
+  // ---- Konfiguracja WebRTC: tylko publiczne serwery STUN ----
+  const RTC_CONFIG = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" },
+    ],
+  };
 
   // ---- Stan globalny ----
-  let peer = null;
+  let pc = null;          // RTCPeerConnection
+  let dc = null;          // RTCDataChannel
+  let role = null;        // "host" | "viewer"
   let player = null;
   let ytReady = false;
   let playerReady = false;
   let currentVideoId = null;
-  const connections = new Map(); // peerId -> DataConnection (tylko host)
-  let pendingState = null;       // stan oczekujący, gdy player widza jeszcze nie gotowy
-  let suppressEvents = false;    // blokuje echo zdarzeń u widza
+  let pendingState = null;
 
-  // ---- Elementy UI ----
+  // ---- UI ----
   const $ = (id) => document.getElementById(id);
   const ui = {
     status: $("status"),
-    setup: $("setup"),
+    roleScreen: $("roleScreen"),
+    roleHostBtn: $("roleHostBtn"),
+    roleViewerBtn: $("roleViewerBtn"),
+    // host
+    hostSetup: $("hostSetup"),
     ytUrl: $("ytUrl"),
     createBtn: $("createBtn"),
     setupError: $("setupError"),
-    sharePanel: $("sharePanel"),
-    shareLink: $("shareLink"),
-    copyBtn: $("copyBtn"),
-    viewerCount: $("viewerCount"),
-    joinScreen: $("joinScreen"),
-    joinBtn: $("joinBtn"),
-    joinError: $("joinError"),
+    hostExchange: $("hostExchange"),
+    inviteOut: $("inviteOut"),
+    copyInviteBtn: $("copyInviteBtn"),
+    answerIn: $("answerIn"),
+    connectHostBtn: $("connectHostBtn"),
+    hostExchangeError: $("hostExchangeError"),
+    // viewer
+    viewerJoin: $("viewerJoin"),
+    inviteIn: $("inviteIn"),
+    genAnswerBtn: $("genAnswerBtn"),
+    viewerJoinError: $("viewerJoinError"),
+    viewerAnswer: $("viewerAnswer"),
+    answerOut: $("answerOut"),
+    copyAnswerBtn: $("copyAnswerBtn"),
+    // player
     playerWrap: $("playerWrap"),
     viewerOverlay: $("viewerOverlay"),
     hostControls: $("hostControls"),
@@ -48,26 +66,37 @@
     ui.status.textContent = text;
     ui.status.className = "status status--" + kind;
   }
+  function showError(el, msg) { el.textContent = msg; el.classList.remove("hidden"); }
+  function clearError(el) { el.classList.add("hidden"); }
+  function show(el) { el.classList.remove("hidden"); }
+  function hide(el) { el.classList.add("hidden"); }
 
-  function showError(el, msg) {
-    el.textContent = msg;
-    el.classList.remove("hidden");
+  function encode(obj) {
+    return btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+  }
+  function decode(str) {
+    return JSON.parse(decodeURIComponent(escape(atob(str.trim()))));
   }
 
-  function clearError(el) {
-    el.classList.add("hidden");
+  async function copyToClipboard(text, btn, label) {
+    try {
+      await navigator.clipboard.writeText(text);
+      const old = btn.textContent;
+      btn.textContent = "Skopiowano ✓";
+      setTimeout(() => (btn.textContent = old), 1500);
+    } catch (_) {
+      // fallback — zaznacz tekst
+      if (label) label.select();
+    }
   }
 
   function parseVideoId(input) {
     if (!input) return null;
     input = input.trim();
-    // Samo ID (11 znaków)
     if (/^[\w-]{11}$/.test(input)) return input;
     try {
       const url = new URL(input);
-      if (url.hostname.includes("youtu.be")) {
-        return url.pathname.slice(1, 12) || null;
-      }
+      if (url.hostname.includes("youtu.be")) return url.pathname.slice(1, 12) || null;
       if (url.searchParams.get("v")) return url.searchParams.get("v");
       const m = url.pathname.match(/\/(embed|shorts|v)\/([\w-]{11})/);
       if (m) return m[2];
@@ -78,123 +107,181 @@
     return null;
   }
 
+  // Czeka na zebranie kandydatów ICE (vanilla ICE = jeden kod, bez trickle)
+  function waitForIce(connection) {
+    return new Promise((resolve) => {
+      if (connection.iceGatheringState === "complete") return resolve();
+      const check = () => {
+        if (connection.iceGatheringState === "complete") {
+          connection.removeEventListener("icegatheringstatechange", check);
+          resolve();
+        }
+      };
+      connection.addEventListener("icegatheringstatechange", check);
+      // zabezpieczenie: nie czekaj w nieskończoność
+      setTimeout(resolve, 2500);
+    });
+  }
+
   // ---- YouTube IFrame API ----
-  window.onYouTubeIframeAPIReady = function () {
-    ytReady = true;
-    maybeInit();
-  };
+  window.onYouTubeIframeAPIReady = function () { ytReady = true; };
 
   function createPlayer(videoId, asViewer) {
-    player = new YT.Player("player", {
-      host: "https://www.youtube-nocookie.com",
-      videoId: videoId || undefined,
-      playerVars: {
-        autoplay: 0,
-        controls: asViewer ? 0 : 1,
-        disablekb: asViewer ? 1 : 0,
-        modestbranding: 1,
-        rel: 0,
-        playsinline: 1,
-        origin: location.origin,
-      },
-      events: {
-        onReady: () => {
-          playerReady = true;
-          if (asViewer) {
-            player.mute(); // start wyciszony, by autoplay działał; przycisk włącza dźwięk
-            if (pendingState) {
-              applyState(pendingState);
-              pendingState = null;
-            }
-          }
+    if (player) return;
+    const build = () => {
+      player = new YT.Player("player", {
+        videoId: videoId || undefined,
+        playerVars: {
+          autoplay: 0,
+          controls: asViewer ? 0 : 1,
+          disablekb: asViewer ? 1 : 0,
+          modestbranding: 1,
+          rel: 0,
+          playsinline: 1,
+          origin: location.origin,
         },
-        onStateChange: isHost ? onHostStateChange : undefined,
-      },
-    });
+        events: {
+          onReady: () => {
+            playerReady = true;
+            if (asViewer) {
+              player.mute();
+              if (pendingState) { applyState(pendingState); pendingState = null; }
+            }
+          },
+          onStateChange: role === "host" ? onHostStateChange : undefined,
+        },
+      });
+    };
+    if (ytReady) build();
+    else {
+      const prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = function () { ytReady = true; if (prev) prev(); build(); };
+    }
+  }
+
+  // =====================================================================
+  //  Kanał danych — wspólna obsługa
+  // =====================================================================
+  function setupDataChannel(channel) {
+    dc = channel;
+    channel.onopen = () => {
+      setStatus("Połączono ✓", "on");
+      if (role === "host") {
+        // od razu prześlij pełny stan nowemu widzowi
+        sendMsg(buildState());
+        startHeartbeat();
+      }
+    };
+    channel.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch (_) { return; }
+      if (role === "host") {
+        if (msg.type === "hello") sendMsg(buildState());
+      } else {
+        applyRemote(msg);
+      }
+    };
+    channel.onclose = () => setStatus("Rozłączono", "off");
+    channel.onerror = () => setStatus("Błąd kanału", "off");
+  }
+
+  function sendMsg(msg) {
+    if (dc && dc.readyState === "open") {
+      try { dc.send(JSON.stringify(msg)); } catch (_) {}
+    }
+  }
+
+  function watchConnection() {
+    pc.onconnectionstatechange = () => {
+      const s = pc.connectionState;
+      if (s === "connected") setStatus("Połączono ✓", "on");
+      else if (s === "connecting") setStatus("Łączenie…", "wait");
+      else if (s === "failed") setStatus("Połączenie nieudane", "off");
+      else if (s === "disconnected" || s === "closed") setStatus("Rozłączono", "off");
+    };
   }
 
   // =====================================================================
   //  HOST
   // =====================================================================
-  function initHost() {
-    ui.setup.classList.remove("hidden");
+  function initHostUi() {
+    role = "host";
+    hide(ui.roleScreen);
+    show(ui.hostSetup);
+    setStatus("Wybierz film", "wait");
 
-    ui.createBtn.addEventListener("click", () => {
-      clearError(ui.setupError);
-      const vid = parseVideoId(ui.ytUrl.value);
-      if (!vid) {
-        showError(ui.setupError, "Nieprawidłowy link do YouTube. Wklej pełny adres filmu.");
-        return;
-      }
-      currentVideoId = vid;
-      startHostSession(vid);
-    });
+    ui.createBtn.addEventListener("click", onCreateInvite);
+    ui.connectHostBtn.addEventListener("click", onHostAcceptAnswer);
+    ui.copyInviteBtn.addEventListener("click", () =>
+      copyToClipboard(ui.inviteOut.value, ui.copyInviteBtn, ui.inviteOut));
 
     ui.playBtn.addEventListener("click", () => player && player.playVideo());
     ui.pauseBtn.addEventListener("click", () => player && player.pauseVideo());
     ui.syncBtn.addEventListener("click", broadcastSync);
   }
 
-  function startHostSession(videoId) {
-    ui.setup.classList.add("hidden");
-    ui.playerWrap.classList.remove("hidden");
-    ui.hostControls.classList.remove("hidden");
-    ui.sharePanel.classList.remove("hidden");
+  async function onCreateInvite() {
+    clearError(ui.setupError);
+    const vid = parseVideoId(ui.ytUrl.value);
+    if (!vid) {
+      showError(ui.setupError, "Nieprawidłowy link do YouTube. Wklej pełny adres filmu.");
+      return;
+    }
+    currentVideoId = vid;
+    ui.createBtn.disabled = true;
+    ui.createBtn.textContent = "Generuję…";
+    setStatus("Tworzę kod…", "wait");
 
-    createPlayer(videoId, false);
+    try {
+      pc = new RTCPeerConnection(RTC_CONFIG);
+      watchConnection();
+      const channel = pc.createDataChannel("sync", { ordered: true });
+      setupDataChannel(channel);
 
-    peer = new Peer();
-    peer.on("open", (id) => {
-      const link = `${location.origin}${location.pathname}?room=${id}`;
-      ui.shareLink.value = link;
-      setStatus("Pokój aktywny", "on");
-    });
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForIce(pc);
 
-    peer.on("connection", (conn) => {
-      conn.on("open", () => {
-        connections.set(conn.peer, conn);
-        updateViewerCount();
-        // Wyślij nowemu widzowi pełny, aktualny stan
-        conn.send(buildState());
-      });
-      conn.on("data", (msg) => {
-        if (msg && msg.type === "hello") conn.send(buildState());
-      });
-      conn.on("close", () => {
-        connections.delete(conn.peer);
-        updateViewerCount();
-      });
-      conn.on("error", () => {
-        connections.delete(conn.peer);
-        updateViewerCount();
-      });
-    });
+      ui.inviteOut.value = encode({ v: 1, videoId: vid, sdp: pc.localDescription });
 
-    peer.on("error", (err) => {
-      setStatus("Błąd połączenia", "off");
-      console.error("PeerJS:", err);
-    });
+      // Pokaż player hosta i panel wymiany kodów
+      show(ui.playerWrap);
+      show(ui.hostControls);
+      createPlayer(vid, false);
+      hide(ui.hostSetup);
+      show(ui.hostExchange);
+      setStatus("Czeka na widza…", "wait");
+    } catch (err) {
+      console.error(err);
+      showError(ui.setupError, "Nie udało się utworzyć zaproszenia: " + err.message);
+      ui.createBtn.disabled = false;
+      ui.createBtn.textContent = "Generuj kod zaproszenia";
+    }
+  }
 
-    // Heartbeat synchronizujący pozycję
-    setInterval(() => {
-      if (connections.size > 0 && playerReady) broadcastSync();
-    }, 2000);
-
-    // Kopiowanie linku
-    ui.copyBtn.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(ui.shareLink.value);
-        ui.copyBtn.textContent = "Skopiowano ✓";
-        setTimeout(() => (ui.copyBtn.textContent = "Kopiuj"), 1500);
-      } catch (_) {
-        ui.shareLink.select();
-      }
-    });
+  async function onHostAcceptAnswer() {
+    clearError(ui.hostExchangeError);
+    let payload;
+    try {
+      payload = decode(ui.answerIn.value);
+      if (!payload || !payload.sdp) throw new Error("brak sdp");
+    } catch (_) {
+      showError(ui.hostExchangeError, "Nieprawidłowy kod odpowiedzi.");
+      return;
+    }
+    try {
+      await pc.setRemoteDescription(payload.sdp);
+      setStatus("Łączenie…", "wait");
+      ui.connectHostBtn.disabled = true;
+      ui.connectHostBtn.textContent = "Łączenie…";
+    } catch (err) {
+      console.error(err);
+      showError(ui.hostExchangeError, "Nie udało się połączyć: " + err.message);
+    }
   }
 
   function buildState() {
-    const playing =
-      playerReady && player.getPlayerState() === YT.PlayerState.PLAYING;
+    const playing = playerReady && player.getPlayerState() === YT.PlayerState.PLAYING;
     return {
       type: "state",
       videoId: currentVideoId,
@@ -203,27 +290,17 @@
     };
   }
 
-  function sendAll(msg) {
-    connections.forEach((conn) => {
-      try { conn.send(msg); } catch (_) {}
-    });
-  }
-
   function onHostStateChange(e) {
     if (!playerReady) return;
     const t = player.getCurrentTime();
-    if (e.data === YT.PlayerState.PLAYING) {
-      sendAll({ type: "play", t, videoId: currentVideoId });
-    } else if (e.data === YT.PlayerState.PAUSED) {
-      sendAll({ type: "pause", t });
-    } else if (e.data === YT.PlayerState.ENDED) {
-      sendAll({ type: "pause", t });
-    }
+    if (e.data === YT.PlayerState.PLAYING) sendMsg({ type: "play", t, videoId: currentVideoId });
+    else if (e.data === YT.PlayerState.PAUSED) sendMsg({ type: "pause", t });
+    else if (e.data === YT.PlayerState.ENDED) sendMsg({ type: "pause", t });
   }
 
   function broadcastSync() {
     if (!playerReady) return;
-    sendAll({
+    sendMsg({
       type: "sync",
       t: player.getCurrentTime(),
       playing: player.getPlayerState() === YT.PlayerState.PLAYING,
@@ -231,18 +308,26 @@
     });
   }
 
-  function updateViewerCount() {
-    ui.viewerCount.textContent = String(connections.size);
+  let heartbeat = null;
+  function startHeartbeat() {
+    if (heartbeat) return;
+    heartbeat = setInterval(() => {
+      if (dc && dc.readyState === "open" && playerReady) broadcastSync();
+    }, 2000);
   }
 
   // =====================================================================
   //  WIDZ
   // =====================================================================
-  function initViewer() {
-    ui.joinScreen.classList.remove("hidden");
-    setStatus("Gotowy do dołączenia", "wait");
+  function initViewerUi() {
+    role = "viewer";
+    hide(ui.roleScreen);
+    show(ui.viewerJoin);
+    setStatus("Wklej kod zaproszenia", "wait");
 
-    ui.joinBtn.addEventListener("click", joinSession);
+    ui.genAnswerBtn.addEventListener("click", onViewerGenerateAnswer);
+    ui.copyAnswerBtn.addEventListener("click", () =>
+      copyToClipboard(ui.answerOut.value, ui.copyAnswerBtn, ui.answerOut));
     ui.unmuteBtn.addEventListener("click", () => {
       if (!player) return;
       player.unMute();
@@ -251,52 +336,53 @@
     });
   }
 
-  function joinSession() {
-    clearError(ui.joinError);
-    ui.joinBtn.disabled = true;
-    ui.joinBtn.textContent = "Łączenie…";
-    setStatus("Łączenie z hostem…", "wait");
+  async function onViewerGenerateAnswer() {
+    clearError(ui.viewerJoinError);
+    let payload;
+    try {
+      payload = decode(ui.inviteIn.value);
+      if (!payload || !payload.sdp || !payload.videoId) throw new Error("brak danych");
+    } catch (_) {
+      showError(ui.viewerJoinError, "Nieprawidłowy kod zaproszenia.");
+      return;
+    }
 
-    ui.joinScreen.classList.add("hidden");
-    ui.playerWrap.classList.remove("hidden");
-    ui.viewerBar.classList.remove("hidden");
-    ui.viewerOverlay.classList.remove("hidden");
+    currentVideoId = payload.videoId;
+    ui.genAnswerBtn.disabled = true;
+    ui.genAnswerBtn.textContent = "Generuję…";
+    setStatus("Tworzę odpowiedź…", "wait");
 
-    createPlayer(null, true);
+    try {
+      pc = new RTCPeerConnection(RTC_CONFIG);
+      watchConnection();
+      pc.ondatachannel = (e) => setupDataChannel(e.channel);
 
-    peer = new Peer();
-    peer.on("open", () => {
-      const conn = peer.connect(roomId, { reliable: true });
+      await pc.setRemoteDescription(payload.sdp);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await waitForIce(pc);
 
-      conn.on("open", () => {
-        setStatus("Połączono z hostem", "on");
-        conn.send({ type: "hello" });
-      });
+      ui.answerOut.value = encode({ v: 1, sdp: pc.localDescription });
 
-      conn.on("data", (msg) => applyRemote(msg));
-
-      conn.on("close", () => setStatus("Host rozłączony", "off"));
-      conn.on("error", () => {
-        showError(ui.joinError, "Nie udało się połączyć z hostem.");
-        setStatus("Błąd połączenia", "off");
-      });
-    });
-
-    peer.on("error", (err) => {
-      console.error("PeerJS:", err);
-      if (String(err).includes("peer-unavailable")) {
-        setStatus("Pokój nieaktywny", "off");
-        showError(ui.joinError, "Host nie jest dostępny. Poproś o nowy link.");
-      } else {
-        setStatus("Błąd połączenia", "off");
-      }
-    });
+      // Pokaż player widza (zablokowany) i panel z kodem odpowiedzi
+      hide(ui.viewerJoin);
+      show(ui.viewerAnswer);
+      show(ui.playerWrap);
+      show(ui.viewerBar);
+      show(ui.viewerOverlay);
+      createPlayer(currentVideoId, true);
+      setStatus("Odeślij kod i czekaj…", "wait");
+    } catch (err) {
+      console.error(err);
+      showError(ui.viewerJoinError, "Nie udało się utworzyć odpowiedzi: " + err.message);
+      ui.genAnswerBtn.disabled = false;
+      ui.genAnswerBtn.textContent = "Generuj kod odpowiedzi";
+    }
   }
 
   function applyRemote(msg) {
     if (!msg || !msg.type) return;
     if (!playerReady) {
-      // Zapamiętaj najświeższy pełny stan do zastosowania po gotowości
       if (msg.type === "state" || msg.type === "sync") pendingState = msg;
       return;
     }
@@ -321,11 +407,8 @@
     ensureVideo(msg.videoId);
     safeSeek(msg.t, 1.0);
     const state = player.getPlayerState();
-    if (msg.playing && state !== YT.PlayerState.PLAYING) {
-      player.playVideo();
-    } else if (!msg.playing && state === YT.PlayerState.PLAYING) {
-      player.pauseVideo();
-    }
+    if (msg.playing && state !== YT.PlayerState.PLAYING) player.playVideo();
+    else if (!msg.playing && state === YT.PlayerState.PLAYING) player.pauseVideo();
   }
 
   function ensureVideo(videoId) {
@@ -344,20 +427,6 @@
   // =====================================================================
   //  Start
   // =====================================================================
-  function maybeInit() {
-    if (!ytReady) return;
-    if (isHost) initHost();
-    else initViewer();
-  }
-
-  // PeerJS dostępne? (dla pewności)
-  if (typeof Peer === "undefined") {
-    setStatus("Błąd: brak biblioteki PeerJS", "off");
-  }
-
-  // Jeśli YT API już gotowe (np. cache), odpal od razu
-  if (window.YT && window.YT.Player) {
-    ytReady = true;
-    maybeInit();
-  }
+  ui.roleHostBtn.addEventListener("click", initHostUi);
+  ui.roleViewerBtn.addEventListener("click", initViewerUi);
 })();

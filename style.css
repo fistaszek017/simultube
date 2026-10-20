@@ -98,6 +98,60 @@ body {
 .viewers { margin-top: 14px; color: var(--muted); }
 .viewers strong { color: var(--ok); }
 
+/* Wybór roli */
+.role-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 18px;
+}
+@media (max-width: 520px) { .role-grid { grid-template-columns: 1fr; } }
+.role-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  text-align: left;
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--card-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .15s ease, transform .05s ease;
+}
+.role-tile:hover { border-color: var(--accent); }
+.role-tile:active { transform: translateY(1px); }
+.role-tile__icon { font-size: 1.8rem; }
+.role-tile__title { font-weight: 700; font-size: 1.05rem; }
+.role-tile__desc { color: var(--muted); font-size: 0.88rem; }
+
+/* Pola z kodami */
+.step { margin-bottom: 4px; }
+.code-area {
+  width: 100%;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card-2);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.82rem;
+  resize: vertical;
+  word-break: break-all;
+}
+.code-area:focus { outline: 2px solid var(--accent); }
+.sep { border: none; border-top: 1px solid var(--border); margin: 22px 0; }
+.waiting {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #3a362a;
+  color: #f5e39a;
+  font-size: 0.9rem;
+}
+
 .player-wrap { margin-bottom: 16px; }
 .player-box {
   position: relative;

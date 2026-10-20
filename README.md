@@ -2,25 +2,27 @@
 
 Prosta aplikacja webowa do **wspólnego, zsynchronizowanego oglądania YouTube** przez dwie (lub więcej) osoby.
 
-- **Host** wkleja link do filmu → dostaje link do wysłania znajomym.
-- **Host** steruje odtwarzaniem i pauzą — reszta widzów jest synchronizowana automatycznie.
-- Działa **peer-to-peer** (PeerJS), więc **nie wymaga własnego backendu** i można to postawić na GitHub Pages.
+- **Host** wybiera film i steruje odtwarzaniem/pauzą — widz jest synchronizowany automatycznie.
+- Działa **peer-to-peer** (czysty WebRTC) z **ręczną sygnalizacją** (wymiana dwóch kodów), więc **nie wymaga żadnego serwera, backendu ani kont**.
+- Jedyna rzecz „z zewnątrz" to darmowe publiczne serwery **STUN** (potrzebne do wykrycia adresu w internecie) — nie przechodzą przez nie żadne dane wideo ani sterowania.
 
 ## Jak to działa
 
-1. Host otwiera stronę, wkleja link do filmu i klika **„Utwórz pokój"**.
-2. Strona generuje link typu `.../index.html?room=XXXX`.
-3. Widzowie otwierają ten link, klikają **„Dołącz i oglądaj"** i łączą się bezpośrednio z hostem.
-4. Host steruje playerem (play/pause/przewijanie), a komendy lecą do widzów. Dodatkowo co 2 s wysyłany jest sygnał synchronizujący pozycję, żeby nikt nie „odjechał".
+1. **Host** wybiera „Jestem hostem", wkleja link do filmu i klika **„Generuj kod zaproszenia"**.
+2. Host kopiuje **kod zaproszenia** i wysyła go znajomemu (Discord, Messenger, cokolwiek).
+3. **Widz** wybiera „Dołączam", wkleja kod zaproszenia i klika **„Generuj kod odpowiedzi"**.
+4. Widz kopiuje swój **kod odpowiedzi** i odsyła go hostowi.
+5. Host wkleja kod odpowiedzi i klika **„Połącz"** → gotowe, połączenie bezpośrednie P2P.
 
-> Host musi mieć otwartą kartę przez cały seans — to on jest „serwerem" połączenia P2P.
+Od tej chwili host steruje playerem (play/pause/przewijanie), a komendy lecą prosto do widza. Dodatkowo co 2 s wysyłany jest sygnał synchronizujący pozycję (tolerancja ~1 s), żeby nikt nie „odjechał".
+
+> Wymianę kodów robi się tylko raz, przy zestawianiu połączenia. To cena za brak jakiegokolwiek serwera.
 
 ## Blokowanie reklam
 
 Nie da się wstrzyknąć własnego adblocka do `<iframe>` YouTube (polityka same-origin przeglądarki). Zamiast tego:
 
 - Zainstaluj **[uBlock Origin](https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm)** lub inny adblock z Chrome Web Store — działa na poziomie przeglądarki i blokuje reklamy także w osadzonym playerze.
-- Strona używa trybu prywatności **`youtube-nocookie.com`**.
 
 ## Publikacja na GitHub Pages
 
@@ -37,7 +39,7 @@ Następnie w repo: **Settings → Pages → Build and deployment → Source: Dep
 
 Po chwili strona będzie pod `https://<twoj-login>.github.io/<repo>/`.
 
-> ⚠️ GitHub Pages serwuje po HTTPS — to ważne, bo zarówno PeerJS, jak i YouTube wymagają bezpiecznego połączenia (lokalnie testuj przez `localhost`, nie `file://`).
+> ⚠️ GitHub Pages serwuje po HTTPS — to ważne, bo zarówno WebRTC, jak i YouTube wymagają bezpiecznego połączenia (lokalnie testuj przez `localhost`, nie `file://`).
 
 ## Testowanie lokalne
 
@@ -60,5 +62,6 @@ Najwygodniej testować dwa „końce" w dwóch kartach/przeglądarkach albo na d
 
 ## Ograniczenia
 
-- Publiczny serwer sygnalizacyjny PeerJS bywa czasem przeciążony. Dla produkcji warto postawić własny `PeerServer` (to ten „mały backend", jeśli kiedyś będzie potrzebny).
+- Połączenie jest **1:1** (host ↔ jeden widz) — dokładnie „dwie osoby". Więcej widzów wymagałoby powtórzenia wymiany kodów z każdym z osobna.
+- Przy bardzo restrykcyjnym NAT (tzw. symmetric NAT) samo STUN może nie wystarczyć do zestawienia bezpośredniego połączenia. Wtedy potrzebny byłby serwer TURN (jedyny przypadek, gdy przydałby się „ktoś z zewnątrz").
 - Synchronizacja jest „na oko" dokładna (tolerancja ~1 s) — dla zwykłego oglądania w zupełności wystarcza.
