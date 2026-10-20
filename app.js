@@ -63,6 +63,10 @@
     cinemaBtnViewer: $("cinemaBtnViewer"),
     fsBtnHost: $("fsBtnHost"),
     fsBtnViewer: $("fsBtnViewer"),
+    viewerProgress: $("viewerProgress"),
+    curTime: $("curTime"),
+    durTime: $("durTime"),
+    progressFill: $("progressFill"),
   };
 
   // ---- Pomocnicze ----
@@ -150,6 +154,7 @@
             if (asViewer) {
               player.mute();
               if (pendingState) { applyState(pendingState); pendingState = null; }
+              startProgressLoop();
             }
           },
           onStateChange: role === "host" ? onHostStateChange : undefined,
@@ -426,6 +431,35 @@
     if (typeof t !== "number") return;
     const drift = Math.abs(player.getCurrentTime() - t);
     if (drift > tolerance) player.seekTo(t, true);
+  }
+
+  // ---- Pasek postępu i czas (dla widza) ----
+  function fmtTime(s) {
+    if (!isFinite(s) || s < 0) s = 0;
+    s = Math.floor(s);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    const pad = (n) => String(n).padStart(2, "0");
+    return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+  }
+
+  let progressTimer = null;
+  function startProgressLoop() {
+    if (progressTimer) return;
+    show(ui.viewerProgress);
+    progressTimer = setInterval(updateProgress, 500);
+    updateProgress();
+  }
+
+  function updateProgress() {
+    if (!playerReady || role !== "viewer") return;
+    let cur = 0, dur = 0;
+    try { cur = player.getCurrentTime() || 0; dur = player.getDuration() || 0; } catch (_) { return; }
+    ui.curTime.textContent = fmtTime(cur);
+    ui.durTime.textContent = fmtTime(dur);
+    const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+    ui.progressFill.style.width = pct + "%";
   }
 
   // =====================================================================

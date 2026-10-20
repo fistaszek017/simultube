@@ -195,6 +195,39 @@ body {
   padding: 12px 14px;
 }
 .controls__spacer { flex: 1; }
+
+/* Pasek postępu widza */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.progress__time {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-width: 44px;
+  text-align: center;
+}
+.progress__track {
+  flex: 1;
+  height: 7px;
+  background: var(--card-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress__fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  border-radius: 999px;
+  transition: width 0.4s linear;
+}
 .role-badge {
   font-size: 0.72rem;
   font-weight: 700;
@@ -246,7 +279,8 @@ body.cinema .player-box {
   max-width: calc((100vh - 160px) * 16 / 9);
   margin-inline: auto;
 }
-body.cinema .controls {
+body.cinema .controls,
+body.cinema .progress {
   max-width: calc((100vh - 160px) * 16 / 9);
   margin: 10px auto 0;
   border-radius: 10px;
@@ -269,7 +303,8 @@ body.cinema .controls {
   border: none;
   border-radius: 0;
 }
-.player-wrap:fullscreen .controls {
+.player-wrap:fullscreen .controls,
+.player-wrap:fullscreen .progress {
   margin: 0;
   border-radius: 0;
   border: none;
