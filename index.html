@@ -17,10 +17,21 @@
     <div id="status" class="status status--off">Wybierz rolę</div>
   </header>
 
+  <!-- Brak konfiguracji relaya -->
+  <section id="relayMissing" class="card hidden">
+    <h2>⚠️ Skonfiguruj relay</h2>
+    <p class="muted">Aplikacja nie ma jeszcze adresu Twojej „skrytki" (relaya). Ustaw go poniżej (zapamięta się w przeglądarce) albo wpisz na stałe w pliku <code>app.js</code> w stałej <code>RELAY_URL</code> przed publikacją. Instrukcja postawienia relaya jest w <code>README.md</code>.</p>
+    <div class="row">
+      <input id="relayInput" type="text" inputmode="url" autocomplete="off"
+             placeholder="https://twoj-projekt.deno.dev" />
+      <button id="relaySaveBtn" class="btn btn--primary">Zapisz</button>
+    </div>
+  </section>
+
   <!-- Wybór roli -->
-  <section id="roleScreen" class="card">
+  <section id="roleScreen" class="card hidden">
     <h2>Wspólne oglądanie YouTube</h2>
-    <p class="muted">Bez serwera, bez kont. Host wysyła spersonalizowany link, a widz odsyła jeden krótki kod zwrotny — i gotowe. Host może zaprosić wiele osób.</p>
+    <p class="muted">Host wybiera film i wysyła jeden link. Każdy, kto go kliknie, dołącza automatycznie — bez kodów. Host steruje odtwarzaniem.</p>
     <div class="role-grid">
       <button id="roleHostBtn" class="role-tile">
         <span class="role-tile__icon">🎬</span>
@@ -30,15 +41,15 @@
       <button id="roleViewerBtn" class="role-tile">
         <span class="role-tile__icon">🍿</span>
         <span class="role-tile__title">Dołączam</span>
-        <span class="role-tile__desc">Mam link lub kod od hosta</span>
+        <span class="role-tile__desc">Mam link od hosta</span>
       </button>
     </div>
   </section>
 
-  <!-- HOST: krok 1 - film -->
+  <!-- HOST: wybór filmu -->
   <section id="hostSetup" class="card hidden">
     <h2>1. Wybierz film</h2>
-    <p class="muted">Wklej link do filmu z YouTube i utwórz pokój. Potem wygenerujesz linki zaproszeń dla widzów.</p>
+    <p class="muted">Wklej link do filmu z YouTube i utwórz pokój. Dostaniesz jeden link do rozesłania.</p>
     <div class="row">
       <input id="ytUrl" type="text" inputmode="url" autocomplete="off"
              placeholder="https://www.youtube.com/watch?v=..." />
@@ -47,30 +58,22 @@
     <p id="setupError" class="error hidden"></p>
   </section>
 
-  <!-- HOST: zarządzanie zaproszeniami -->
+  <!-- HOST: link do rozesłania -->
   <section id="hostRoom" class="card hidden">
-    <h2>Zaproś widzów</h2>
-    <p class="muted">Dla każdej osoby jest osobny link (połączenie jest 1:1 z każdym widzem). Wyślij link, a gdy ktoś odeśle Ci kod zwrotny — wklej go w jego kartę i połącz.</p>
-    <div id="inviteList"></div>
-    <button id="addInviteBtn" class="btn btn--primary">+ Nowy link zaproszenia</button>
+    <h2>Link dla widzów</h2>
+    <p class="muted">Wyślij ten link osobom, z którymi chcesz oglądać. Każdy, kto go otworzy, dołączy sam — bez żadnych kodów. Zostaw tę kartę otwartą (jesteś hostem).</p>
+    <div class="row">
+      <input id="shareLink" type="text" readonly />
+      <button id="copyLinkBtn" class="btn">Kopiuj</button>
+    </div>
+    <div class="viewers">Podłączeni widzowie: <strong id="viewerCount">0</strong></div>
   </section>
 
-  <!-- WIDZ: krok 1 - link/kod zaproszenia -->
+  <!-- WIDZ: ekran łączenia -->
   <section id="viewerJoin" class="card hidden">
-    <h2>1. Wklej link lub kod zaproszenia</h2>
-    <p class="muted">Jeśli otworzyłeś link od hosta, pole jest już wypełnione. Kliknij, aby wygenerować swój kod zwrotny.</p>
-    <textarea id="inviteIn" class="code-area" rows="3" placeholder="Wklej link lub kod zaproszenia od hosta…"></textarea>
-    <button id="genAnswerBtn" class="btn btn--primary">Generuj kod zwrotny</button>
+    <h2>Dołączanie do seansu</h2>
+    <p class="muted" id="viewerJoinMsg">Łączę z hostem…</p>
     <p id="viewerJoinError" class="error hidden"></p>
-  </section>
-
-  <!-- WIDZ: krok 2 - odeślij kod zwrotny -->
-  <section id="viewerAnswer" class="card hidden">
-    <h2>2. Odeślij kod zwrotny</h2>
-    <p class="muted">Skopiuj ten kod i odeślij go hostowi. Potem czekaj — po wklejeniu przez hosta film ruszy automatycznie.</p>
-    <textarea id="answerOut" class="code-area" readonly rows="3"></textarea>
-    <button id="copyAnswerBtn" class="btn">Kopiuj kod zwrotny</button>
-    <div class="waiting">⏳ Czekam, aż host nawiąże połączenie…</div>
   </section>
 
   <!-- Player -->
@@ -114,7 +117,7 @@
   </section>
 
   <footer class="foot muted">
-    Działa peer-to-peer (WebRTC) • bez serwera i kont • hostowane na GitHub Pages
+    Wideo i sterowanie lecą peer-to-peer (WebRTC) • relay tylko łączy • strona na GitHub Pages
   </footer>
 
   <script src="https://www.youtube.com/iframe_api"></script>

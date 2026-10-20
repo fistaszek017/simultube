@@ -1,33 +1,56 @@
 # SymulTube 🎬
 
-Prosta aplikacja webowa do **wspólnego, zsynchronizowanego oglądania YouTube** przez dwie (lub więcej) osoby.
+Aplikacja webowa do **wspólnego, zsynchronizowanego oglądania YouTube**.
 
 - **Host** wybiera film i steruje odtwarzaniem/pauzą — widzowie są synchronizowani automatycznie.
-- Działa **peer-to-peer** (czysty WebRTC) z **ręczną sygnalizacją**, więc **nie wymaga żadnego serwera, backendu ani kont**.
-- **Multi-user**: jeden host, wielu widzów (topologia gwiazdy — host trzyma osobne połączenie z każdym).
-- Jedyna rzecz „z zewnątrz" to darmowe publiczne serwery **STUN** (do wykrycia adresu w internecie) — nie przechodzą przez nie żadne dane wideo ani sterowania.
+- **Jeden link** dla wszystkich — kto go kliknie, dołącza sam. **Zero kodów do przepisywania.**
+- **Multi-user**: jeden host, wielu widzów (topologia gwiazdy).
+- Wideo i sterowanie lecą **peer-to-peer** (WebRTC). Mały **relay** służy tylko do „przedstawienia" peerów przy łączeniu — nie przechodzą przez niego żadne dane wideo.
 
-## Jak to działa
+## Architektura
 
-1. **Host** wybiera „Jestem hostem", wkleja link do filmu i klika **„Utwórz pokój"**.
-2. Dla każdego widza host dostaje **spersonalizowany link zaproszenia** (`...#join=...`) — kopiuje go i wysyła (przycisk „+ Nowy link zaproszenia" dodaje kolejnych widzów).
-3. **Widz** klika link → strona sama otwiera tryb dołączania → klika **„Generuj kod zwrotny"**.
-4. Widz kopiuje swój **krótki kod zwrotny** (skompresowany gzip) i odsyła go hostowi.
-5. Host wkleja kod zwrotny w kartę danego widza i klika **„Połącz"** → gotowe, połączenie bezpośrednie P2P.
+```
+Przeglądarki (host + widzowie)  ──►  GitHub Pages (statyczne pliki)
+        │
+        │  tylko nawiązanie połączenia (offer/answer)
+        ▼
+   Twój relay na Deno Deploy  ("skrytka na klucz")
+        │
+        ▼
+  Połączenie P2P (WebRTC) ── wideo/sterowanie lecą bezpośrednio między przeglądarkami
+```
 
-Od tej chwili host steruje playerem (play/pause/przewijanie), a komendy lecą prosto do wszystkich widzów. Dodatkowo co 2 s idzie sygnał synchronizujący pozycję (tolerancja ~1 s). Widz ma własny pasek postępu z czasem (natywny pasek YT jest u niego zablokowany).
+## Krok 1 — postaw relay (Twoją „skrytkę") na Deno Deploy
 
-### Dlaczego jest kod zwrotny, a nie np. 6 cyfr?
+Relay to malutki program, który pozwala hostowi i widzom znaleźć się nawzajem. Jest darmowy i bezobsługowy.
 
-WebRTC wymaga dwustronnej wymiany opisów połączenia (offer ↔ answer). Kod zwrotny niesie realne dane (odcisk DTLS, ice-ufrag/pwd, kandydatów ICE) — kilkaset bajtów, nie da się ich upchnąć w 6 cyfr bez „skrzynki" w chmurze (czyli serwera). Dlatego kod jest skompresowany, ale musi zostać. Jedyny sposób, by zniknął całkowicie, to dodanie lekkiego serwera sygnalizacyjnego.
+1. Wejdź na **[dash.deno.com](https://dash.deno.com)** i zaloguj się przez GitHub.
+2. Kliknij **New Playground** (albo **New Project → Playground**).
+3. Usuń przykładowy kod i wklej całą zawartość pliku [`relay/main.ts`](relay/main.ts) z tego repo.
+4. Kliknij **Save & Deploy**.
+5. Skopiuj adres projektu, np. `https://twoj-projekt.deno.dev`.
 
-## Blokowanie reklam
+Szybki test: wejdź na adres relaya w przeglądarce — powinno pokazać „SymulTube relay działa ✓".
 
-Nie da się wstrzyknąć własnego adblocka do `<iframe>` YouTube (polityka same-origin przeglądarki). Zamiast tego:
+### A co z bazą KV?
 
-- Zainstaluj **[uBlock Origin](https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm)** lub inny adblock z Chrome Web Store — działa na poziomie przeglądarki i blokuje reklamy także w osadzonym playerze.
+Relay działa **od razu, bez żadnej bazy** — jeśli KV nie jest podłączone, używa pamięci RAM. Dla oglądania we dwójkę / w małej grupie to w zupełności wystarcza (dane łączenia żyją tylko kilka sekund).
 
-## Publikacja na GitHub Pages
+**Opcjonalnie, dla maksymalnej niezawodności** (gdy host i widz są w odległych regionach świata), podłącz darmowe Deno KV:
+- W dashboardzie projektu: zakładka **KV** (lub **Databases**) → **Create / Attach database** → wybierz świeżo utworzoną → **Redeploy**.
+- Relay sam wykryje KV i go użyje (zobaczysz w logach „używam Deno KV").
+
+## Krok 2 — wpisz adres relaya w aplikacji
+
+W pliku `app.js`, na górze, ustaw stałą:
+
+```js
+const RELAY_DEFAULT = "https://twoj-projekt.deno.dev";
+```
+
+(Na czas testów możesz też wpisać adres w aplikacji — na ekranie „Skonfiguruj relay" — zapamięta się w przeglądarce. Ale do publikacji wpisz go w `app.js`, żeby widzowie też go mieli.)
+
+## Krok 3 — opublikuj frontend na GitHub Pages
 
 ```bash
 git init
@@ -38,33 +61,45 @@ git remote add origin https://github.com/<twoj-login>/<repo>.git
 git push -u origin main
 ```
 
-Następnie w repo: **Settings → Pages → Build and deployment → Source: Deploy from a branch → `main` / `root` → Save**.
+Następnie w repo: **Settings → Pages → Source: Deploy from a branch → `main` / `root` → Save**.
+Strona pojawi się pod `https://<twoj-login>.github.io/<repo>/`.
 
-Po chwili strona będzie pod `https://<twoj-login>.github.io/<repo>/`.
+> ⚠️ GitHub Pages serwuje po HTTPS — ważne, bo WebRTC i YouTube wymagają bezpiecznego połączenia (lokalnie testuj przez `localhost`, nie `file://`).
 
-> ⚠️ GitHub Pages serwuje po HTTPS — to ważne, bo zarówno WebRTC, jak i YouTube wymagają bezpiecznego połączenia (lokalnie testuj przez `localhost`, nie `file://`).
+## Jak się używa
+
+1. Host: „Jestem hostem" → wkleja link do filmu → **Utwórz pokój**.
+2. Host kopiuje **jeden link** i rozsyła go znajomym.
+3. Każdy, kto kliknie link, **dołącza automatycznie** — bez kodów. Host steruje odtwarzaniem.
+
+Co 2 s host wysyła sygnał synchronizujący pozycję (tolerancja ~1 s). Widz ma własny pasek postępu z czasem (natywny pasek YT jest u niego zablokowany). Są też: tryb kinowy (`t`), pełny ekran (`f`), a u hosta spacja = play/pauza.
+
+## Blokowanie reklam
+
+Nie da się wstrzyknąć własnego adblocka do `<iframe>` YouTube (polityka same-origin). Zamiast tego zainstaluj **[uBlock Origin](https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm)** lub inny adblock z Chrome Web Store — działa na poziomie przeglądarki i blokuje reklamy także w osadzonym playerze.
 
 ## Testowanie lokalne
 
-`file://` nie zadziała (potrzebny `localhost`). Odpal mini-serwer:
+`file://` nie zadziała (potrzebny `localhost`):
 
 ```bash
 python -m http.server 8000
 # otwórz http://localhost:8000
 ```
 
-Najwygodniej testować dwa „końce" w dwóch kartach/przeglądarkach albo na dwóch urządzeniach.
+Relay możesz odpalić lokalnie (jeśli masz Deno): `deno run -A --unstable-kv relay/main.ts`, albo po prostu użyć wersji z Deno Deploy. Adres relaya ustaw na ekranie „Skonfiguruj relay". Testuj w dwóch oknach (jedno zwykłe = host, drugie incognito z linkiem = widz).
 
 ## Pliki
 
-| Plik         | Rola                                   |
-|--------------|----------------------------------------|
-| `index.html` | struktura strony                       |
-| `style.css`  | wygląd                                 |
-| `app.js`     | logika: PeerJS + YouTube IFrame API    |
+| Plik            | Rola                                        |
+|-----------------|---------------------------------------------|
+| `index.html`    | struktura strony                            |
+| `style.css`     | wygląd                                       |
+| `app.js`        | logika: WebRTC + relay + YouTube IFrame API |
+| `relay/main.ts` | relay sygnalizacyjny (Deno Deploy)          |
 
 ## Ograniczenia
 
-- Każdy widz to osobny handshake (link + kod zwrotny). Dla kilku osób jest OK, ale im więcej widzów, tym więcej ręcznej wymiany po stronie hosta.
-- Przy bardzo restrykcyjnym NAT (tzw. symmetric NAT) samo STUN może nie wystarczyć do zestawienia bezpośredniego połączenia. Wtedy potrzebny byłby serwer TURN (jedyny przypadek, gdy przydałby się „ktoś z zewnątrz").
-- Synchronizacja jest „na oko" dokładna (tolerancja ~1 s) — dla zwykłego oglądania w zupełności wystarcza.
+- Host musi mieć otwartą kartę przez cały seans (jest „centralą" P2P).
+- Przy bardzo restrykcyjnym NAT (tzw. symmetric NAT) samo STUN może nie wystarczyć. Wtedy potrzebny byłby serwer TURN.
+- Synchronizacja jest „na oko" dokładna (~1 s) — dla zwykłego oglądania w zupełności wystarcza.

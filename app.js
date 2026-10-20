@@ -1,13 +1,18 @@
 /* SymulTube - wspólne oglądanie YouTube
-   Czysty WebRTC, ręczna sygnalizacja. Zero serwerów, zero kont.
-   - Zaproszenie = spersonalizowany link (#join=...)
+   WebRTC + lekki relay sygnalizacyjny (Twoja "skrytka").
+   - Jeden link dla wszystkich widzów, zero kodów do przepisywania
    - Multi-user: jeden host, wielu widzów (gwiazda)
-   - Kod zwrotny skompresowany gzip (krótki) */
+   - Przez relay lecą TYLKO dane łączenia; wideo/sterowanie idą P2P */
 
 (() => {
   "use strict";
 
-  // ---- Konfiguracja WebRTC: tylko publiczne serwery STUN ----
+  // === KONFIGURACJA ===
+  // Wpisz tu adres swojego relaya z Deno Deploy PRZED publikacją na GitHub Pages.
+  // Możesz też ustawić go tymczasowo w przeglądarce (ekran "Skonfiguruj relay").
+  const RELAY_DEFAULT = "happy-mandrill-6605.fistaszek017.deno.net";
+  let RELAY_URL = (localStorage.getItem("symultube_relay") || RELAY_DEFAULT).replace(/\/+$/, "");
+
   const RTC_CONFIG = {
     iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
@@ -17,21 +22,25 @@
   };
 
   // ---- Stan ----
-  let role = null;              // "host" | "viewer"
+  let role = null;
   let player = null;
   let ytReady = false;
   let playerReady = false;
   let currentVideoId = null;
+  let roomId = null;
   let pendingState = null;
 
-  const hostPeers = [];         // [{pc, dc, els, n}] — tylko host
-  let viewerPc = null;          // tylko widz
+  const hostPeers = new Map();   // viewerId -> {pc}
+  let viewerPc = null;
   let viewerDc = null;
 
   // ---- UI ----
   const $ = (id) => document.getElementById(id);
   const ui = {
     status: $("status"),
+    relayMissing: $("relayMissing"),
+    relayInput: $("relayInput"),
+    relaySaveBtn: $("relaySaveBtn"),
     roleScreen: $("roleScreen"),
     roleHostBtn: $("roleHostBtn"),
     roleViewerBtn: $("roleViewerBtn"),
@@ -40,15 +49,12 @@
     createBtn: $("createBtn"),
     setupError: $("setupError"),
     hostRoom: $("hostRoom"),
-    inviteList: $("inviteList"),
-    addInviteBtn: $("addInviteBtn"),
+    shareLink: $("shareLink"),
+    copyLinkBtn: $("copyLinkBtn"),
+    viewerCount: $("viewerCount"),
     viewerJoin: $("viewerJoin"),
-    inviteIn: $("inviteIn"),
-    genAnswerBtn: $("genAnswerBtn"),
+    viewerJoinMsg: $("viewerJoinMsg"),
     viewerJoinError: $("viewerJoinError"),
-    viewerAnswer: $("viewerAnswer"),
-    answerOut: $("answerOut"),
-    copyAnswerBtn: $("copyAnswerBtn"),
     playerWrap: $("playerWrap"),
     viewerOverlay: $("viewerOverlay"),
     hostControls: $("hostControls"),
@@ -67,23 +73,13 @@
     progressFill: $("progressFill"),
   };
 
-  // ---- Pomocnicze UI ----
-  function setStatus(text, kind) { ui.status.textContent = text; ui.status.className = "status status--" + kind; }
-  function showError(el, msg) { el.textContent = msg; el.classList.remove("hidden"); }
+  function setStatus(t, k) { ui.status.textContent = t; ui.status.className = "status status--" + k; }
+  function showError(el, m) { el.textContent = m; el.classList.remove("hidden"); }
   function clearError(el) { el.classList.add("hidden"); }
   function show(el) { el.classList.remove("hidden"); }
   function hide(el) { el.classList.add("hidden"); }
 
-  async function copyToClipboard(text, btn, fallbackEl) {
-    try {
-      await navigator.clipboard.writeText(text);
-      const old = btn.textContent;
-      btn.textContent = "Skopiowano ✓";
-      setTimeout(() => (btn.textContent = old), 1500);
-    } catch (_) {
-      if (fallbackEl) { fallbackEl.focus(); fallbackEl.select(); }
-    }
-  }
+  function relayConfigured() { return RELAY_URL && !RELAY_URL.includes("CHANGE-ME"); }
 
   function parseVideoId(input) {
     if (!input) return null;
@@ -102,42 +98,13 @@
     return null;
   }
 
-  // ---- Kodowanie / kompresja kodów ----
-  function b64urlFromBytes(bytes) {
-    let bin = "";
-    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-  function bytesFromB64url(str) {
-    str = str.replace(/-/g, "+").replace(/_/g, "/");
-    while (str.length % 4) str += "=";
-    const bin = atob(str);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return bytes;
-  }
-  async function pack(obj) {
-    const json = JSON.stringify(obj);
-    if (window.CompressionStream) {
-      const cs = new CompressionStream("gzip");
-      const buf = await new Response(new Blob([json]).stream().pipeThrough(cs)).arrayBuffer();
-      return "G" + b64urlFromBytes(new Uint8Array(buf));
-    }
-    return "R" + b64urlFromBytes(new TextEncoder().encode(json));
-  }
-  async function unpack(code) {
-    code = (code || "").trim();
-    // obsłuż wklejony cały link (#join=...)
-    const hashIdx = code.indexOf("#join=");
-    if (hashIdx !== -1) code = code.slice(hashIdx + 6);
-    const tag = code[0];
-    const bytes = bytesFromB64url(code.slice(1));
-    if (tag === "G") {
-      if (!window.DecompressionStream) throw new Error("Przeglądarka nie wspiera dekompresji.");
-      const txt = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
-      return JSON.parse(txt);
-    }
-    return JSON.parse(new TextDecoder().decode(bytes));
+  function randomId(len) {
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let s = "";
+    const arr = new Uint32Array(len);
+    crypto.getRandomValues(arr);
+    for (let i = 0; i < len; i++) s += chars[arr[i] % chars.length];
+    return s;
   }
 
   function waitForIce(connection) {
@@ -154,11 +121,23 @@
     });
   }
 
-  function inviteLink(code) {
-    return `${location.origin}${location.pathname}#join=${code}`;
+  // ---- Relay (fetch) ----
+  async function relayPost(path, body) {
+    const r = await fetch(RELAY_URL + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error("relay " + r.status);
+    return r.json();
+  }
+  async function relayGet(path) {
+    const r = await fetch(RELAY_URL + path);
+    if (!r.ok) throw new Error("relay " + r.status);
+    return r.json();
   }
 
-  // ---- YouTube IFrame API ----
+  // ---- YouTube ----
   window.onYouTubeIframeAPIReady = function () { ytReady = true; };
 
   function createPlayer(videoId, asViewer) {
@@ -167,13 +146,8 @@
       player = new YT.Player("player", {
         videoId: videoId || undefined,
         playerVars: {
-          autoplay: 0,
-          controls: asViewer ? 0 : 1,
-          disablekb: asViewer ? 1 : 0,
-          modestbranding: 1,
-          rel: 0,
-          playsinline: 1,
-          origin: location.origin,
+          autoplay: 0, controls: asViewer ? 0 : 1, disablekb: asViewer ? 1 : 0,
+          modestbranding: 1, rel: 0, playsinline: 1, origin: location.origin,
         },
         events: {
           onReady: () => {
@@ -203,159 +177,98 @@
     hide(ui.roleScreen);
     show(ui.hostSetup);
     setStatus("Wybierz film", "wait");
-
     ui.createBtn.addEventListener("click", onCreateRoom);
-    ui.addInviteBtn.addEventListener("click", () => createInvite());
     ui.playBtn.addEventListener("click", () => player && player.playVideo());
     ui.pauseBtn.addEventListener("click", () => player && player.pauseVideo());
     ui.syncBtn.addEventListener("click", broadcastSync);
+    ui.copyLinkBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(ui.shareLink.value);
+        ui.copyLinkBtn.textContent = "Skopiowano ✓";
+        setTimeout(() => (ui.copyLinkBtn.textContent = "Kopiuj"), 1500);
+      } catch (_) { ui.shareLink.select(); }
+    });
   }
 
   function onCreateRoom() {
     clearError(ui.setupError);
     const vid = parseVideoId(ui.ytUrl.value);
-    if (!vid) {
-      showError(ui.setupError, "Nieprawidłowy link do YouTube. Wklej pełny adres filmu.");
-      return;
-    }
+    if (!vid) { showError(ui.setupError, "Nieprawidłowy link do YouTube."); return; }
     currentVideoId = vid;
+    roomId = randomId(8);
+
     hide(ui.hostSetup);
     show(ui.playerWrap);
     show(ui.hostControls);
     show(ui.hostRoom);
     createPlayer(vid, false);
-    setStatus("Pokój utworzony", "on");
-    createInvite(); // od razu pierwszy link
+
+    ui.shareLink.value = `${location.origin}${location.pathname}#room=${roomId}&v=${vid}`;
+    setStatus("Pokój otwarty — czeka na widzów", "on");
+
+    startHostPolling();
+    startHeartbeat();
   }
 
-  let inviteCounter = 0;
-  async function createInvite() {
-    inviteCounter += 1;
-    const n = inviteCounter;
+  const handledViewers = new Set();
+  let hostPolling = false;
+  function startHostPolling() {
+    setInterval(async () => {
+      if (hostPolling || !relayConfigured()) return;
+      hostPolling = true;
+      try {
+        const { offers } = await relayGet(`/offers?room=${encodeURIComponent(roomId)}`);
+        for (const o of offers || []) {
+          if (handledViewers.has(o.id)) continue;
+          handledViewers.add(o.id);
+          answerViewer(o.id, o.sdp);
+        }
+      } catch (_) { /* cichy retry */ }
+      finally { hostPolling = false; }
+    }, 1500);
+  }
 
-    const entry = { pc: new RTCPeerConnection(RTC_CONFIG), dc: null, n, els: null };
-    entry.dc = entry.pc.createDataChannel("sync", { ordered: true });
-    setupHostChannel(entry);
-    entry.pc.onconnectionstatechange = () => {
-      const s = entry.pc.connectionState;
-      if (s === "failed" || s === "closed" || s === "disconnected") {
-        setInviteStatus(entry, "rozłączony", "off");
-      }
-    };
-    hostPeers.push(entry);
-
-    const els = buildInviteCard(entry);
-    entry.els = els;
-    ui.inviteList.appendChild(els.card);
-    setInviteStatus(entry, "generuję link…", "wait");
-
+  async function answerViewer(viewerId, offerSdp) {
     try {
-      const offer = await entry.pc.createOffer();
-      await entry.pc.setLocalDescription(offer);
-      await waitForIce(entry.pc);
-      const code = await pack({ s: entry.pc.localDescription.sdp, v: currentVideoId });
-      els.link.value = inviteLink(code);
-      setInviteStatus(entry, "oczekuje na widza", "wait");
+      const pc = new RTCPeerConnection(RTC_CONFIG);
+      hostPeers.set(viewerId, { pc, dc: null });
+      pc.ondatachannel = (e) => setupHostChannel(viewerId, e.channel);
+      pc.onconnectionstatechange = () => {
+        const s = pc.connectionState;
+        if (s === "failed" || s === "closed" || s === "disconnected") {
+          hostPeers.delete(viewerId);
+          updateViewerCount();
+        }
+      };
+      await pc.setRemoteDescription({ type: "offer", sdp: offerSdp });
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await waitForIce(pc);
+      await relayPost("/answer", { room: roomId, id: viewerId, sdp: pc.localDescription.sdp });
     } catch (err) {
-      console.error(err);
-      setInviteStatus(entry, "błąd: " + err.message, "off");
+      console.error("answerViewer:", err);
+      hostPeers.delete(viewerId);
     }
   }
 
-  function buildInviteCard(entry) {
-    const card = document.createElement("div");
-    card.className = "invite";
-
-    const head = document.createElement("div");
-    head.className = "invite__head";
-    const title = document.createElement("strong");
-    title.textContent = "Widz #" + entry.n;
-    const status = document.createElement("span");
-    status.className = "invite__status";
-    head.append(title, status);
-
-    const linkLabel = document.createElement("label");
-    linkLabel.className = "invite__label";
-    linkLabel.textContent = "Link zaproszenia (wyślij widzowi):";
-    const link = document.createElement("textarea");
-    link.className = "code-area";
-    link.rows = 2;
-    link.readOnly = true;
-    const copyBtn = document.createElement("button");
-    copyBtn.className = "btn";
-    copyBtn.textContent = "Kopiuj link";
-    copyBtn.addEventListener("click", () => copyToClipboard(link.value, copyBtn, link));
-
-    const ansLabel = document.createElement("label");
-    ansLabel.className = "invite__label";
-    ansLabel.textContent = "Kod zwrotny od widza:";
-    const answer = document.createElement("textarea");
-    answer.className = "code-area";
-    answer.rows = 2;
-    answer.placeholder = "Wklej kod zwrotny, który odesłał widz…";
-    const connectBtn = document.createElement("button");
-    connectBtn.className = "btn btn--primary";
-    connectBtn.textContent = "Połącz";
-    connectBtn.addEventListener("click", () => acceptAnswer(entry, answer.value, connectBtn));
-
-    card.append(head, linkLabel, link, copyBtn, ansLabel, answer, connectBtn);
-    return { card, status, link, answer, connectBtn };
+  function setupHostChannel(viewerId, ch) {
+    const entry = hostPeers.get(viewerId);
+    if (entry) entry.dc = ch;
+    ch.onopen = () => { updateViewerCount(); sendTo(ch, buildState()); };
+    ch.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (_) { return; } if (m.type === "hello") sendTo(ch, buildState()); };
+    ch.onclose = () => { hostPeers.delete(viewerId); updateViewerCount(); };
+    ch.onerror = () => {};
   }
 
-  function setInviteStatus(entry, text, kind) {
-    if (!entry.els) return;
-    entry.els.status.textContent = text;
-    entry.els.status.className = "invite__status invite__status--" + kind;
+  function updateViewerCount() {
+    let n = 0;
+    hostPeers.forEach((e) => { if (e.dc && e.dc.readyState === "open") n++; });
+    ui.viewerCount.textContent = String(n);
+    setStatus(n > 0 ? `Oglądających: ${n}` : "Pokój otwarty — czeka na widzów", n > 0 ? "on" : "wait");
   }
 
-  async function acceptAnswer(entry, code, btn) {
-    let payload;
-    try {
-      payload = await unpack(code);
-      if (!payload || !payload.s) throw new Error("brak danych");
-    } catch (_) {
-      setInviteStatus(entry, "nieprawidłowy kod zwrotny", "off");
-      return;
-    }
-    try {
-      await entry.pc.setRemoteDescription({ type: "answer", sdp: payload.s });
-      btn.disabled = true;
-      btn.textContent = "Łączenie…";
-      setInviteStatus(entry, "łączenie…", "wait");
-    } catch (err) {
-      console.error(err);
-      setInviteStatus(entry, "błąd: " + err.message, "off");
-    }
-  }
-
-  function setupHostChannel(entry) {
-    const ch = entry.dc;
-    ch.onopen = () => {
-      setInviteStatus(entry, "połączony ✓", "on");
-      if (entry.els) entry.els.connectBtn.textContent = "Połączono";
-      updateHostStatus();
-      sendTo(ch, buildState());
-      startHeartbeat();
-    };
-    ch.onmessage = (e) => {
-      let msg; try { msg = JSON.parse(e.data); } catch (_) { return; }
-      if (msg.type === "hello") sendTo(ch, buildState());
-    };
-    ch.onclose = () => { setInviteStatus(entry, "rozłączony", "off"); updateHostStatus(); };
-    ch.onerror = () => setInviteStatus(entry, "błąd kanału", "off");
-  }
-
-  function updateHostStatus() {
-    const n = hostPeers.filter((e) => e.dc && e.dc.readyState === "open").length;
-    setStatus(n > 0 ? `Podłączeni widzowie: ${n}` : "Pokój utworzony", n > 0 ? "on" : "wait");
-  }
-
-  function sendTo(ch, msg) {
-    if (ch && ch.readyState === "open") { try { ch.send(JSON.stringify(msg)); } catch (_) {} }
-  }
-  function broadcast(msg) {
-    hostPeers.forEach((e) => sendTo(e.dc, msg));
-  }
+  function sendTo(ch, msg) { if (ch && ch.readyState === "open") { try { ch.send(JSON.stringify(msg)); } catch (_) {} } }
+  function broadcast(msg) { hostPeers.forEach((e) => sendTo(e.dc, msg)); }
 
   function buildState() {
     const playing = playerReady && player.getPlayerState() === YT.PlayerState.PLAYING;
@@ -375,90 +288,93 @@
   let heartbeat = null;
   function startHeartbeat() {
     if (heartbeat) return;
-    heartbeat = setInterval(() => { if (playerReady) broadcastSync(); }, 2000);
+    heartbeat = setInterval(() => { if (playerReady && hostPeers.size) broadcastSync(); }, 2000);
   }
 
   // =====================================================================
   //  WIDZ
   // =====================================================================
-  function initViewerUi(prefill) {
+  async function initViewerAuto(room, vid) {
     role = "viewer";
     hide(ui.roleScreen);
     show(ui.viewerJoin);
-    setStatus("Wklej link/kod zaproszenia", "wait");
-    if (prefill) ui.inviteIn.value = prefill;
+    setStatus("Łączę z hostem…", "wait");
 
-    ui.genAnswerBtn.addEventListener("click", onViewerGenerateAnswer);
-    ui.copyAnswerBtn.addEventListener("click", () => copyToClipboard(ui.answerOut.value, ui.copyAnswerBtn, ui.answerOut));
     ui.unmuteBtn.addEventListener("click", () => {
       if (!player) return;
       player.unMute(); player.setVolume(100);
       ui.unmuteBtn.textContent = "🔊 Dźwięk włączony";
     });
-  }
 
-  async function onViewerGenerateAnswer() {
-    clearError(ui.viewerJoinError);
-    let payload;
-    try {
-      payload = await unpack(ui.inviteIn.value);
-      if (!payload || !payload.s || !payload.v) throw new Error("brak danych");
-    } catch (_) {
-      showError(ui.viewerJoinError, "Nieprawidłowy link lub kod zaproszenia.");
-      return;
-    }
-
-    currentVideoId = payload.v;
-    ui.genAnswerBtn.disabled = true;
-    ui.genAnswerBtn.textContent = "Generuję…";
-    setStatus("Tworzę kod zwrotny…", "wait");
+    currentVideoId = vid || null;
+    roomId = room;
+    const viewerId = randomId(10);
 
     try {
       viewerPc = new RTCPeerConnection(RTC_CONFIG);
       viewerPc.onconnectionstatechange = () => {
         const s = viewerPc.connectionState;
         if (s === "connected") setStatus("Połączono ✓", "on");
-        else if (s === "failed") setStatus("Połączenie nieudane", "off");
-        else if (s === "disconnected" || s === "closed") setStatus("Rozłączono", "off");
+        else if (s === "failed") { setStatus("Połączenie nieudane", "off"); showError(ui.viewerJoinError, "Nie udało się połączyć z hostem (możliwa blokada sieci / NAT)."); }
       };
-      viewerPc.ondatachannel = (e) => setupViewerChannel(e.channel);
+      viewerDc = viewerPc.createDataChannel("sync", { ordered: true });
+      setupViewerChannel(viewerDc);
 
-      await viewerPc.setRemoteDescription({ type: "offer", sdp: payload.s });
-      const answer = await viewerPc.createAnswer();
-      await viewerPc.setLocalDescription(answer);
+      const offer = await viewerPc.createOffer();
+      await viewerPc.setLocalDescription(offer);
       await waitForIce(viewerPc);
 
-      ui.answerOut.value = await pack({ s: viewerPc.localDescription.sdp });
+      await relayPost("/offer", { room, id: viewerId, sdp: viewerPc.localDescription.sdp });
+      ui.viewerJoinMsg.textContent = "Czekam, aż host odbierze połączenie…";
 
-      hide(ui.viewerJoin);
-      show(ui.viewerAnswer);
+      // Pokaż player (zablokowany) od razu
       show(ui.playerWrap);
       show(ui.viewerBar);
       show(ui.viewerOverlay);
       createPlayer(currentVideoId, true);
-      setStatus("Odeślij kod i czekaj…", "wait");
+
+      pollForAnswer(room, viewerId);
     } catch (err) {
       console.error(err);
-      showError(ui.viewerJoinError, "Nie udało się utworzyć kodu zwrotnego: " + err.message);
-      ui.genAnswerBtn.disabled = false;
-      ui.genAnswerBtn.textContent = "Generuj kod zwrotny";
+      showError(ui.viewerJoinError, "Błąd łączenia: " + err.message);
+      setStatus("Błąd", "off");
     }
   }
 
+  function pollForAnswer(room, viewerId) {
+    let tries = 0;
+    const timer = setInterval(async () => {
+      tries++;
+      if (tries > 40) { // ~60 s
+        clearInterval(timer);
+        if (viewerPc.connectionState !== "connected") {
+          showError(ui.viewerJoinError, "Host nie odebrał połączenia. Upewnij się, że ma otwartą stronę, i odśwież.");
+          setStatus("Host nie odpowiada", "off");
+        }
+        return;
+      }
+      try {
+        const { sdp } = await relayGet(`/answer?room=${encodeURIComponent(room)}&id=${encodeURIComponent(viewerId)}`);
+        if (sdp) {
+          clearInterval(timer);
+          await viewerPc.setRemoteDescription({ type: "answer", sdp });
+          hide(ui.viewerJoin);
+          setStatus("Łączenie…", "wait");
+        }
+      } catch (_) { /* retry */ }
+    }, 1500);
+  }
+
   function setupViewerChannel(channel) {
-    viewerDc = channel;
-    channel.onopen = () => setStatus("Połączono ✓", "on");
+    channel.onopen = () => { setStatus("Połączono ✓", "on"); hide(ui.viewerJoin); sendTo(channel, { type: "hello" }); };
     channel.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (_) { return; } applyRemote(m); };
     channel.onclose = () => setStatus("Host rozłączony", "off");
-    channel.onerror = () => setStatus("Błąd kanału", "off");
+    channel.onerror = () => {};
   }
 
   function applyRemote(msg) {
     if (!msg || !msg.type) return;
-    if (!playerReady) {
-      if (msg.type === "state" || msg.type === "sync") pendingState = msg;
-      return;
-    }
+    if (!playerReady) { if (msg.type === "state" || msg.type === "sync") pendingState = msg; return; }
     switch (msg.type) {
       case "state":
       case "sync": applyState(msg); break;
@@ -476,9 +392,9 @@
   function ensureVideo(videoId) {
     if (videoId && videoId !== currentVideoId) { currentVideoId = videoId; player.loadVideoById(videoId); }
   }
-  function safeSeek(t, tolerance) {
+  function safeSeek(t, tol) {
     if (typeof t !== "number") return;
-    if (Math.abs(player.getCurrentTime() - t) > tolerance) player.seekTo(t, true);
+    if (Math.abs(player.getCurrentTime() - t) > tol) player.seekTo(t, true);
   }
 
   // ---- Pasek postępu (widz) ----
@@ -541,12 +457,42 @@
   });
 
   // =====================================================================
-  //  Start — auto-wykrycie linku zaproszenia
+  //  Start
   // =====================================================================
-  ui.roleHostBtn.addEventListener("click", initHostUi);
-  ui.roleViewerBtn.addEventListener("click", () => initViewerUi());
+  function boot() {
+    const hp = new URLSearchParams(location.hash.replace(/^#/, ""));
+    const room = hp.get("room");
+    const vid = hp.get("v");
 
-  const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
-  const joinCode = hashParams.get("join");
-  if (joinCode) initViewerUi(joinCode);
+    if (!relayConfigured()) {
+      show(ui.relayMissing);
+      ui.relayInput.value = RELAY_URL.includes("CHANGE-ME") ? "" : RELAY_URL;
+      ui.relaySaveBtn.addEventListener("click", () => {
+        const val = ui.relayInput.value.trim().replace(/\/+$/, "");
+        if (!val) return;
+        localStorage.setItem("symultube_relay", val);
+        RELAY_URL = val;
+        hide(ui.relayMissing);
+        afterRelayReady(room, vid);
+      });
+      setStatus("Brak relaya", "off");
+      return;
+    }
+    afterRelayReady(room, vid);
+  }
+
+  function afterRelayReady(room, vid) {
+    if (room) {
+      initViewerAuto(room, vid);
+    } else {
+      show(ui.roleScreen);
+      setStatus("Wybierz rolę", "wait");
+      ui.roleHostBtn.addEventListener("click", initHostUi);
+      ui.roleViewerBtn.addEventListener("click", () => {
+        alert("Aby dołączyć, otwórz link, który wysłał Ci host.");
+      });
+    }
+  }
+
+  boot();
 })();
