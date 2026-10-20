@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SymulTube - wspólne oglądanie YouTube</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://www.youtube-nocookie.com" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">▶</span>
+      <h1>SymulTube</h1>
+    </div>
+    <div id="status" class="status status--off">Łączenie…</div>
+  </header>
+
+  <!-- Ekran startowy hosta -->
+  <section id="setup" class="setup card hidden">
+    <h2>Rozpocznij wspólny seans</h2>
+    <p class="muted">Wklej link do filmu z YouTube, a dostaniesz link do wysłania znajomym. To Ty (host) sterujesz odtwarzaniem.</p>
+    <div class="row">
+      <input id="ytUrl" type="text" inputmode="url" autocomplete="off"
+             placeholder="https://www.youtube.com/watch?v=..." />
+      <button id="createBtn" class="btn btn--primary">Utwórz pokój</button>
+    </div>
+    <p id="setupError" class="error hidden"></p>
+  </section>
+
+  <!-- Panel linku do udostępnienia -->
+  <section id="sharePanel" class="card hidden">
+    <h2>Link dla widzów</h2>
+    <p class="muted">Wyślij ten link osobom, z którymi chcesz oglądać. Zostaw tę kartę otwartą — jesteś hostem.</p>
+    <div class="row">
+      <input id="shareLink" type="text" readonly />
+      <button id="copyBtn" class="btn">Kopiuj</button>
+    </div>
+    <div class="viewers">Podłączeni widzowie: <strong id="viewerCount">0</strong></div>
+  </section>
+
+  <!-- Ekran dołączania widza -->
+  <section id="joinScreen" class="card hidden">
+    <h2>Dołączasz do seansu</h2>
+    <p class="muted">Kliknij, aby połączyć się z hostem. Dźwięk zostanie włączony po kliknięciu (wymóg przeglądarki).</p>
+    <button id="joinBtn" class="btn btn--primary btn--big">Dołącz i oglądaj</button>
+    <p id="joinError" class="error hidden"></p>
+  </section>
+
+  <!-- Player -->
+  <section id="playerWrap" class="player-wrap hidden">
+    <div class="player-box">
+      <div id="player"></div>
+      <!-- Nakładka blokująca klikanie widzom w player -->
+      <div id="viewerOverlay" class="viewer-overlay hidden"></div>
+    </div>
+
+    <div id="hostControls" class="controls hidden">
+      <button id="playBtn" class="btn">▶ Odtwórz</button>
+      <button id="pauseBtn" class="btn">⏸ Pauza</button>
+      <button id="syncBtn" class="btn" title="Wymuś synchronizację u wszystkich">⟳ Zsynchronizuj</button>
+      <div class="controls__spacer"></div>
+      <span class="role-badge role-badge--host">HOST</span>
+    </div>
+
+    <div id="viewerBar" class="controls hidden">
+      <button id="unmuteBtn" class="btn">🔊 Włącz dźwięk</button>
+      <div class="controls__spacer"></div>
+      <span class="role-badge role-badge--viewer">WIDZ</span>
+    </div>
+  </section>
+
+  <section class="card tips">
+    <h3>Jak zablokować reklamy?</h3>
+    <p class="muted">
+      Zainstaluj rozszerzenie <a href="https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm" target="_blank" rel="noopener">uBlock Origin</a>
+      (lub inny adblock z Chrome Web Store). Działa ono na poziomie przeglądarki i blokuje reklamy także w osadzonym playerze YouTube.
+      Strona dodatkowo używa trybu <code>youtube-nocookie</code>.
+    </p>
+  </section>
+
+  <footer class="foot muted">
+    Działa peer-to-peer (PeerJS) • bez własnego backendu • hostowane na GitHub Pages
+  </footer>
+
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="app.js"></script>
+</body>
+</html>
