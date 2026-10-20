@@ -59,6 +59,10 @@
     pauseBtn: $("pauseBtn"),
     syncBtn: $("syncBtn"),
     unmuteBtn: $("unmuteBtn"),
+    cinemaBtnHost: $("cinemaBtnHost"),
+    cinemaBtnViewer: $("cinemaBtnViewer"),
+    fsBtnHost: $("fsBtnHost"),
+    fsBtnViewer: $("fsBtnViewer"),
   };
 
   // ---- Pomocnicze ----
@@ -423,6 +427,55 @@
     const drift = Math.abs(player.getCurrentTime() - t);
     if (drift > tolerance) player.seekTo(t, true);
   }
+
+  // =====================================================================
+  //  Tryb kinowy i pełny ekran
+  // =====================================================================
+  function toggleCinema() {
+    const on = document.body.classList.toggle("cinema");
+    [ui.cinemaBtnHost, ui.cinemaBtnViewer].forEach((b) => {
+      if (b) b.classList.toggle("btn--active", on);
+    });
+  }
+
+  function toggleFullscreen() {
+    const el = ui.playerWrap;
+    if (!document.fullscreenElement) {
+      (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+    }
+  }
+
+  function onFsChange() {
+    const on = !!document.fullscreenElement;
+    [ui.fsBtnHost, ui.fsBtnViewer].forEach((b) => {
+      if (b) b.classList.toggle("btn--active", on);
+    });
+  }
+
+  [ui.cinemaBtnHost, ui.cinemaBtnViewer].forEach((b) =>
+    b && b.addEventListener("click", toggleCinema));
+  [ui.fsBtnHost, ui.fsBtnViewer].forEach((b) =>
+    b && b.addEventListener("click", toggleFullscreen));
+  document.addEventListener("fullscreenchange", onFsChange);
+  document.addEventListener("webkitfullscreenchange", onFsChange);
+
+  // Skróty klawiszowe (gdy player widoczny i nie piszemy w polu)
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target && e.target.tagName) || "";
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (ui.playerWrap.classList.contains("hidden")) return;
+    const k = e.key.toLowerCase();
+    if (k === "t") { e.preventDefault(); toggleCinema(); }
+    else if (k === "f") { e.preventDefault(); toggleFullscreen(); }
+    else if (k === " " && role === "host" && player) {
+      e.preventDefault();
+      const s = player.getPlayerState();
+      if (s === YT.PlayerState.PLAYING) player.pauseVideo();
+      else player.playVideo();
+    }
+  });
 
   // =====================================================================
   //  Start
