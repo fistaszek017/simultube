@@ -151,6 +151,10 @@ body {
 .code-area:focus { outline: 2px solid var(--accent); }
 .sep { border: none; border-top: 1px solid var(--border); margin: 22px 0; }
 
+/* Sekcje metod połączenia */
+.method h3 { margin: 0 0 6px; font-size: 1rem; }
+.method { margin-top: 4px; }
+
 /* Karty zaproszeń (host multi-user) */
 .invite {
   border: 1px solid var(--border);

@@ -58,22 +58,46 @@
     <p id="setupError" class="error hidden"></p>
   </section>
 
-  <!-- HOST: link do rozesłania -->
+  <!-- HOST: pokój (dwie metody) -->
   <section id="hostRoom" class="card hidden">
-    <h2>Link dla widzów</h2>
-    <p class="muted">Wyślij ten link osobom, z którymi chcesz oglądać. Każdy, kto go otworzy, dołączy sam — bez żadnych kodów. Zostaw tę kartę otwartą (jesteś hostem).</p>
-    <div class="row">
-      <input id="shareLink" type="text" readonly />
-      <button id="copyLinkBtn" class="btn">Kopiuj</button>
-    </div>
+    <h2>Zaproś widzów</h2>
     <div class="viewers">Podłączeni widzowie: <strong id="viewerCount">0</strong></div>
+
+    <div id="methodRelay" class="method">
+      <h3>✅ Łatwy sposób — jeden link</h3>
+      <p class="muted">Wyślij ten link. Każdy, kto go otworzy, dołączy automatycznie — bez kodów. (Działa przez Twój relay.)</p>
+      <div class="row">
+        <input id="shareLink" type="text" readonly />
+        <button id="copyLinkBtn" class="btn">Kopiuj</button>
+      </div>
+      <p id="relayDownNote" class="muted hidden">⚠️ Relay chwilowo nie odpowiada — użyj sposobu awaryjnego poniżej.</p>
+    </div>
+
+    <hr class="sep" />
+
+    <div id="methodManual" class="method">
+      <h3>🛟 Awaryjnie — przez kod (zawsze działa, bez relaya)</h3>
+      <p class="muted">Dla każdej osoby wygeneruj osobny link awaryjny. Widz odeśle Ci krótki kod zwrotny, który wklejasz w jego kartę.</p>
+      <div id="inviteList"></div>
+      <button id="addInviteBtn" class="btn">+ Nowy link awaryjny (z kodem)</button>
+    </div>
   </section>
 
-  <!-- WIDZ: ekran łączenia -->
+  <!-- WIDZ: ekran łączenia (przez relay) -->
   <section id="viewerJoin" class="card hidden">
     <h2>Dołączanie do seansu</h2>
     <p class="muted" id="viewerJoinMsg">Łączę z hostem…</p>
     <p id="viewerJoinError" class="error hidden"></p>
+  </section>
+
+  <!-- WIDZ: tryb awaryjny (kod zwrotny) -->
+  <section id="viewerManual" class="card hidden">
+    <h2>Dołączasz przez kod awaryjny</h2>
+    <p class="muted">Skopiuj ten kod zwrotny i odeślij go hostowi (Discord, Messenger…). Po wklejeniu przez hosta film ruszy automatycznie.</p>
+    <textarea id="answerOut" class="code-area" readonly rows="3"></textarea>
+    <button id="copyAnswerBtn" class="btn btn--primary">Kopiuj kod zwrotny</button>
+    <div class="waiting">⏳ Czekam, aż host nawiąże połączenie…</div>
+    <p id="viewerManualError" class="error hidden"></p>
   </section>
 
   <!-- Player -->

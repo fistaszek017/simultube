@@ -68,9 +68,13 @@ Strona pojawi się pod `https://<twoj-login>.github.io/<repo>/`.
 
 ## Jak się używa
 
-1. Host: „Jestem hostem" → wkleja link do filmu → **Utwórz pokój**.
-2. Host kopiuje **jeden link** i rozsyła go znajomym.
-3. Każdy, kto kliknie link, **dołącza automatycznie** — bez kodów. Host steruje odtwarzaniem.
+Host: „Jestem hostem" → wkleja link do filmu → **Utwórz pokój**. Są **dwie metody** zapraszania (możesz ich używać jednocześnie):
+
+**✅ Łatwy sposób (przez relay):** host kopiuje **jeden link** i rozsyła. Każdy, kto kliknie, dołącza automatycznie — bez kodów.
+
+**🛟 Awaryjnie (przez kod, zawsze działa):** gdyby relay (Deno) zawodził, host klika **„+ Nowy link awaryjny"** — dostaje osobny link dla widza. Widz klika go, dostaje **krótki kod zwrotny**, odsyła go hostowi, host wkleja w kartę i **Połącz**. Działa bez relaya (ręczna wymiana, kompresja gzip). Gdy relay nie odpowiada, host zobaczy stosowną podpowiedź.
+
+W obu przypadkach host steruje odtwarzaniem, a komendy lecą do wszystkich widzów (niezależnie od metody połączenia).
 
 Co 2 s host wysyła sygnał synchronizujący pozycję (tolerancja ~1 s). Widz ma własny pasek postępu z czasem (natywny pasek YT jest u niego zablokowany). Są też: tryb kinowy (`t`), pełny ekran (`f`), a u hosta spacja = play/pauza.
 

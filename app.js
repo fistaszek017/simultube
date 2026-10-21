@@ -57,12 +57,20 @@
     createBtn: $("createBtn"),
     setupError: $("setupError"),
     hostRoom: $("hostRoom"),
+    methodRelay: $("methodRelay"),
     shareLink: $("shareLink"),
     copyLinkBtn: $("copyLinkBtn"),
+    relayDownNote: $("relayDownNote"),
+    inviteList: $("inviteList"),
+    addInviteBtn: $("addInviteBtn"),
     viewerCount: $("viewerCount"),
     viewerJoin: $("viewerJoin"),
     viewerJoinMsg: $("viewerJoinMsg"),
     viewerJoinError: $("viewerJoinError"),
+    viewerManual: $("viewerManual"),
+    answerOut: $("answerOut"),
+    copyAnswerBtn: $("copyAnswerBtn"),
+    viewerManualError: $("viewerManualError"),
     playerWrap: $("playerWrap"),
     viewerOverlay: $("viewerOverlay"),
     hostControls: $("hostControls"),
@@ -127,6 +135,46 @@
       connection.addEventListener("icegatheringstatechange", check);
       setTimeout(resolve, 2500);
     });
+  }
+
+  // ---- Kodowanie/kompresja kodów (tryb awaryjny) ----
+  function b64urlFromBytes(bytes) {
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function bytesFromB64url(str) {
+    str = str.replace(/-/g, "+").replace(/_/g, "/");
+    while (str.length % 4) str += "=";
+    const bin = atob(str);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  async function pack(obj) {
+    const json = JSON.stringify(obj);
+    if (window.CompressionStream) {
+      const cs = new CompressionStream("gzip");
+      const buf = await new Response(new Blob([json]).stream().pipeThrough(cs)).arrayBuffer();
+      return "G" + b64urlFromBytes(new Uint8Array(buf));
+    }
+    return "R" + b64urlFromBytes(new TextEncoder().encode(json));
+  }
+  async function unpack(code) {
+    code = (code || "").trim();
+    const idx = code.indexOf("#join=");
+    if (idx !== -1) code = code.slice(idx + 6);
+    const tag = code[0];
+    const bytes = bytesFromB64url(code.slice(1));
+    if (tag === "G") {
+      if (!window.DecompressionStream) throw new Error("brak dekompresji");
+      const txt = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+      return JSON.parse(txt);
+    }
+    return JSON.parse(new TextDecoder().decode(bytes));
+  }
+  function manualLink(code) {
+    return `${location.origin}${location.pathname}#join=${code}`;
   }
 
   // ---- Relay (fetch z ponawianiem) ----
@@ -200,6 +248,7 @@
     show(ui.hostSetup);
     setStatus("Wybierz film", "wait");
     ui.createBtn.addEventListener("click", onCreateRoom);
+    ui.addInviteBtn.addEventListener("click", () => createManualInvite());
     ui.playBtn.addEventListener("click", () => player && player.playVideo());
     ui.pauseBtn.addEventListener("click", () => player && player.pauseVideo());
     ui.syncBtn.addEventListener("click", broadcastSync);
@@ -217,7 +266,6 @@
     const vid = parseVideoId(ui.ytUrl.value);
     if (!vid) { showError(ui.setupError, "Nieprawidłowy link do YouTube."); return; }
     currentVideoId = vid;
-    roomId = randomId(8);
 
     hide(ui.hostSetup);
     show(ui.playerWrap);
@@ -225,28 +273,143 @@
     show(ui.hostRoom);
     createPlayer(vid, false);
 
-    ui.shareLink.value = `${location.origin}${location.pathname}#room=${roomId}&v=${vid}`;
+    if (relayConfigured()) {
+      roomId = randomId(8);
+      ui.shareLink.value = `${location.origin}${location.pathname}#room=${roomId}&v=${vid}`;
+      startHostPolling();
+    } else {
+      // Bez relaya: ukryj łatwy link, zostaje tryb awaryjny
+      hide(ui.methodRelay);
+    }
     setStatus("Pokój otwarty — czeka na widzów", "on");
-
-    startHostPolling();
     startHeartbeat();
+  }
+
+  // ---- HOST: tryb awaryjny (ręczny kod) ----
+  let inviteCounter = 0;
+  async function createManualInvite() {
+    inviteCounter += 1;
+    const key = "m" + inviteCounter;
+    const pc = new RTCPeerConnection(RTC_CONFIG);
+    const dc = pc.createDataChannel("sync", { ordered: true });
+    hostPeers.set(key, { pc, dc });
+    setupHostChannel(key, dc);
+    pc.onconnectionstatechange = () => {
+      const s = pc.connectionState;
+      if (s === "connected") setInviteStatus(els, "połączony ✓", "on");
+      else if (s === "failed" || s === "closed" || s === "disconnected") { hostPeers.delete(key); updateViewerCount(); setInviteStatus(els, "rozłączony", "off"); }
+    };
+
+    const els = buildInviteCard(key);
+    ui.inviteList.appendChild(els.card);
+    setInviteStatus(els, "generuję link…", "wait");
+
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForIce(pc);
+      const code = await pack({ s: pc.localDescription.sdp, v: currentVideoId });
+      els.link.value = manualLink(code);
+      setInviteStatus(els, "wyślij link i czekaj na kod zwrotny", "wait");
+    } catch (err) {
+      console.error(err);
+      setInviteStatus(els, "błąd: " + err.message, "off");
+    }
+  }
+
+  function buildInviteCard(key) {
+    const card = document.createElement("div");
+    card.className = "invite";
+    const head = document.createElement("div");
+    head.className = "invite__head";
+    const title = document.createElement("strong");
+    title.textContent = "Widz awaryjny #" + key.slice(1);
+    const status = document.createElement("span");
+    status.className = "invite__status";
+    head.append(title, status);
+
+    const linkLabel = document.createElement("label");
+    linkLabel.className = "invite__label";
+    linkLabel.textContent = "Link awaryjny (wyślij widzowi):";
+    const link = document.createElement("textarea");
+    link.className = "code-area"; link.rows = 2; link.readOnly = true;
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "btn"; copyBtn.textContent = "Kopiuj link";
+    copyBtn.addEventListener("click", () => copyText(link.value, copyBtn, link));
+
+    const ansLabel = document.createElement("label");
+    ansLabel.className = "invite__label";
+    ansLabel.textContent = "Kod zwrotny od widza:";
+    const answer = document.createElement("textarea");
+    answer.className = "code-area"; answer.rows = 2;
+    answer.placeholder = "Wklej kod zwrotny, który odesłał widz…";
+    const connectBtn = document.createElement("button");
+    connectBtn.className = "btn btn--primary"; connectBtn.textContent = "Połącz";
+
+    const els = { card, status, link, answer, connectBtn };
+    connectBtn.addEventListener("click", () => acceptManualAnswer(key, answer.value, els));
+
+    card.append(head, linkLabel, link, copyBtn, ansLabel, answer, connectBtn);
+    return els;
+  }
+
+  function setInviteStatus(els, text, kind) {
+    if (!els) return;
+    els.status.textContent = text;
+    els.status.className = "invite__status invite__status--" + kind;
+  }
+
+  async function acceptManualAnswer(key, code, els) {
+    const entry = hostPeers.get(key);
+    if (!entry) return;
+    let payload;
+    try {
+      payload = await unpack(code);
+      if (!payload || !payload.s) throw new Error("brak danych");
+    } catch (_) {
+      setInviteStatus(els, "nieprawidłowy kod zwrotny", "off");
+      return;
+    }
+    try {
+      await entry.pc.setRemoteDescription({ type: "answer", sdp: payload.s });
+      els.connectBtn.disabled = true;
+      els.connectBtn.textContent = "Łączenie…";
+      setInviteStatus(els, "łączenie…", "wait");
+    } catch (err) {
+      console.error(err);
+      setInviteStatus(els, "błąd: " + err.message, "off");
+    }
+  }
+
+  async function copyText(text, btn, fallbackEl) {
+    try {
+      await navigator.clipboard.writeText(text);
+      const old = btn.textContent;
+      btn.textContent = "Skopiowano ✓";
+      setTimeout(() => (btn.textContent = old), 1500);
+    } catch (_) { if (fallbackEl) { fallbackEl.focus(); fallbackEl.select(); } }
   }
 
   const handledViewers = new Set();
   let hostPolling = false;
+  let relayFailStreak = 0;
   function startHostPolling() {
     setInterval(async () => {
       if (hostPolling || !relayConfigured()) return;
       hostPolling = true;
       try {
         const { offers } = await relayGet(`/offers?room=${encodeURIComponent(roomId)}`);
+        relayFailStreak = 0;
+        hide(ui.relayDownNote);
         for (const o of offers || []) {
           if (handledViewers.has(o.id)) continue;
           handledViewers.add(o.id);
           answerViewer(o.id, o.sdp);
         }
-      } catch (_) { /* cichy retry */ }
-      finally { hostPolling = false; }
+      } catch (_) {
+        relayFailStreak++;
+        if (relayFailStreak >= 3) show(ui.relayDownNote); // relay wygląda na niedostępny
+      } finally { hostPolling = false; }
     }, 1500);
   }
 
@@ -388,7 +551,7 @@
   }
 
   function setupViewerChannel(channel) {
-    channel.onopen = () => { setStatus("Połączono ✓", "on"); hide(ui.viewerJoin); sendTo(channel, { type: "hello" }); };
+    channel.onopen = () => { setStatus("Połączono ✓", "on"); hide(ui.viewerJoin); hide(ui.viewerManual); sendTo(channel, { type: "hello" }); };
     channel.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (_) { return; } applyRemote(m); };
     channel.onclose = () => setStatus("Host rozłączony", "off");
     channel.onerror = () => {};
@@ -417,6 +580,60 @@
   function safeSeek(t, tol) {
     if (typeof t !== "number") return;
     if (Math.abs(player.getCurrentTime() - t) > tol) player.seekTo(t, true);
+  }
+
+  // ---- WIDZ: tryb awaryjny (z linku #join=...) ----
+  async function initViewerManual(joinCode) {
+    role = "viewer";
+    hide(ui.roleScreen);
+    hide(ui.relayMissing);
+    show(ui.viewerManual);
+    setStatus("Tworzę kod zwrotny…", "wait");
+
+    ui.unmuteBtn.addEventListener("click", () => {
+      if (!player) return;
+      player.unMute(); player.setVolume(100);
+      ui.unmuteBtn.textContent = "🔊 Dźwięk włączony";
+    });
+    ui.copyAnswerBtn.addEventListener("click", () => copyText(ui.answerOut.value, ui.copyAnswerBtn, ui.answerOut));
+
+    let payload;
+    try {
+      payload = await unpack(joinCode);
+      if (!payload || !payload.s || !payload.v) throw new Error("brak danych");
+    } catch (_) {
+      showError(ui.viewerManualError, "Nieprawidłowy link awaryjny.");
+      setStatus("Błąd", "off");
+      return;
+    }
+
+    currentVideoId = payload.v;
+    try {
+      viewerPc = new RTCPeerConnection(RTC_CONFIG);
+      viewerPc.onconnectionstatechange = () => {
+        const s = viewerPc.connectionState;
+        if (s === "connected") setStatus("Połączono ✓", "on");
+        else if (s === "failed") { setStatus("Połączenie nieudane", "off"); showError(ui.viewerManualError, "Nie udało się połączyć (możliwa blokada sieci / NAT)."); }
+      };
+      viewerPc.ondatachannel = (e) => setupViewerChannel(e.channel);
+
+      await viewerPc.setRemoteDescription({ type: "offer", sdp: payload.s });
+      const answer = await viewerPc.createAnswer();
+      await viewerPc.setLocalDescription(answer);
+      await waitForIce(viewerPc);
+
+      ui.answerOut.value = await pack({ s: viewerPc.localDescription.sdp });
+      setStatus("Odeślij kod i czekaj…", "wait");
+
+      show(ui.playerWrap);
+      show(ui.viewerBar);
+      show(ui.viewerOverlay);
+      createPlayer(currentVideoId, true);
+    } catch (err) {
+      console.error(err);
+      showError(ui.viewerManualError, "Błąd: " + err.message);
+      setStatus("Błąd", "off");
+    }
   }
 
   // ---- Pasek postępu (widz) ----
@@ -485,35 +702,44 @@
     const hp = new URLSearchParams(location.hash.replace(/^#/, ""));
     const room = hp.get("room");
     const vid = hp.get("v");
+    const joinCode = hp.get("join");
 
-    if (!relayConfigured()) {
-      show(ui.relayMissing);
-      ui.relayInput.value = RELAY_URL.includes("CHANGE-ME") ? "" : RELAY_URL;
-      ui.relaySaveBtn.addEventListener("click", () => {
-        const val = normalizeRelay(ui.relayInput.value);
-        if (!val) return;
-        localStorage.setItem("symultube_relay", val);
-        RELAY_URL = val;
-        hide(ui.relayMissing);
-        afterRelayReady(room, vid);
-      });
-      setStatus("Brak relaya", "off");
+    // Tryb awaryjny (link #join=...) NIE wymaga relaya — ma pierwszeństwo
+    if (joinCode) { initViewerManual(joinCode); return; }
+
+    // Link przez relay (#room=...) wymaga skonfigurowanego relaya
+    if (room) {
+      if (relayConfigured()) initViewerAuto(room, vid);
+      else askForRelay(() => initViewerAuto(room, vid));
       return;
     }
-    afterRelayReady(room, vid);
+
+    // Brak linku → ekran wyboru roli (host). Host działa nawet bez relaya (tryb awaryjny).
+    show(ui.roleScreen);
+    setStatus("Wybierz rolę", "wait");
+    ui.roleHostBtn.addEventListener("click", initHostUi);
+    ui.roleViewerBtn.addEventListener("click", () => {
+      const paste = prompt("Wklej link, który wysłał Ci host:");
+      if (!paste) return;
+      const h = paste.indexOf("#");
+      if (h === -1) { alert("To nie wygląda na prawidłowy link."); return; }
+      location.hash = paste.slice(h);
+      location.reload();
+    });
   }
 
-  function afterRelayReady(room, vid) {
-    if (room) {
-      initViewerAuto(room, vid);
-    } else {
-      show(ui.roleScreen);
-      setStatus("Wybierz rolę", "wait");
-      ui.roleHostBtn.addEventListener("click", initHostUi);
-      ui.roleViewerBtn.addEventListener("click", () => {
-        alert("Aby dołączyć, otwórz link, który wysłał Ci host.");
-      });
-    }
+  function askForRelay(cb) {
+    show(ui.relayMissing);
+    ui.relayInput.value = RELAY_URL.includes("CHANGE-ME") ? "" : RELAY_URL;
+    ui.relaySaveBtn.addEventListener("click", () => {
+      const val = normalizeRelay(ui.relayInput.value);
+      if (!val) return;
+      localStorage.setItem("symultube_relay", val);
+      RELAY_URL = val;
+      hide(ui.relayMissing);
+      cb();
+    });
+    setStatus("Brak relaya", "off");
   }
 
   boot();
