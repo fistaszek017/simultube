@@ -22,6 +22,8 @@ body {
   padding: 16px;
   max-width: 960px;
   margin-inline: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .hidden { display: none !important; }
@@ -288,6 +290,7 @@ body {
   text-align: center;
   padding: 10px 0 20px;
   font-size: 0.8rem;
+  margin-top: auto;
 }
 
 /* ===== Tryb kinowy (theater) ===== */

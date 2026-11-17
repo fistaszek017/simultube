@@ -65,7 +65,7 @@
 
     <div id="methodRelay" class="method">
       <h3>✅ Łatwy sposób — jeden link</h3>
-      <p class="muted">Wyślij ten link. Każdy, kto go otworzy, dołączy automatycznie — bez kodów. (Działa przez Twój relay.)</p>
+      <p class="muted">Wyślij ten link. Każdy, kto go otworzy, dołączy automatycznie — bez kodów.</p>
       <div class="row">
         <input id="shareLink" type="text" readonly />
         <button id="copyLinkBtn" class="btn">Kopiuj</button>
@@ -76,7 +76,7 @@
     <hr class="sep" />
 
     <div id="methodManual" class="method">
-      <h3>🛟 Awaryjnie — przez kod (zawsze działa, bez relaya)</h3>
+      <h3>🛟 Awaryjnie — przez kod dwukierunkowy</h3>
       <p class="muted">Dla każdej osoby wygeneruj osobny link awaryjny. Widz odeśle Ci krótki kod zwrotny, który wklejasz w jego kartę.</p>
       <div id="inviteList"></div>
       <button id="addInviteBtn" class="btn">+ Nowy link awaryjny (z kodem)</button>
@@ -131,17 +131,20 @@
       <span class="role-badge role-badge--viewer">WIDZ</span>
     </div>
   </section>
-
+<!-- 
   <section class="card tips">
     <h3>Jak zablokować reklamy?</h3>
     <p class="muted">
       Zainstaluj rozszerzenie <a href="https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm" target="_blank" rel="noopener">uBlock Origin</a>
       (lub inny adblock z Chrome Web Store). Działa ono na poziomie przeglądarki i blokuje reklamy także w osadzonym playerze YouTube.
     </p>
-  </section>
+  </section> -->
 
   <footer class="foot muted">
-    Wideo i sterowanie lecą peer-to-peer (WebRTC) • relay tylko łączy • strona na GitHub Pages
+    Wideo i sterowanie peer-to-peer • strona na GitHub Pages
+    <div>
+      Made with love by Stanisław Ogonowski
+    </div>
   </footer>
 
   <script src="https://www.youtube.com/iframe_api"></script>
